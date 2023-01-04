@@ -17,7 +17,7 @@ import logging
 import pickle
 from matplotlib import pyplot as plt
 from covid_model.rmw_model import RMWCovidModel
-from covid_model.runnable_functions import do_single_fit, do_create_report
+from covid_model.runnable_functions import do_single_fit, do_create_report, do_run_projection_simulations
 from covid_model.utils import setup, get_filepath_prefix
 from covid_model.analysis.charts import plot_transmission_control
 
@@ -44,21 +44,21 @@ if __name__ == "__main__":
     #   "report_start_date": <report_start_date>,
     #   "report_variants": [...]
     # }
-    # TESTING = True
-    # if TESTING:
-    #     with open("sample_config_nmn.json","r") as f:
-    #         args = json.load(f)
-    #else:
-    # If any of these fields are not defined in the input JSON, the program will fail as it expects them to exist.
-    if len(sys.argv) < 2:
-        print("Error: Missing input arguments.")
-        sys.exit(1)
-    # Retrieve B64-encoded string.
-    b64_json_str = sys.argv[1]
-    # Decode the string
-    json_str = base64.b64decode(b64_json_str, validate=True)
-    # Load the JSON string
-    args = json.loads(json_str)
+    TESTING = True
+    if TESTING:
+        with open("sample_config_nmn.json","r") as f:
+            args = json.load(f)
+    else:
+        # If any of these fields are not defined in the input JSON, the program will fail as it expects them to exist.
+        if len(sys.argv) < 2:
+            print("Error: Missing input arguments.")
+            sys.exit(1)
+        # Retrieve B64-encoded string.
+        b64_json_str = sys.argv[1]
+        # Decode the string
+        json_str = base64.b64decode(b64_json_str, validate=True)
+        # Load the JSON string
+        args = json.loads(json_str)
 
     # OUTPUT SETUP
     # The region handled by this Task/instance is just the BATCH_TASK_INDEX-th element of the args["regions"] list.
@@ -76,12 +76,16 @@ if __name__ == "__main__":
         'start_date': args["start_date"],
         'end_date': args["end_date"],
         'regions': [instance_region],
-        'tags': {"region": instance_region}
+        'tags': {"region": instance_region},
+        'write_results':False
     }
 
     fit_args = {'outdir': outdir,
                 'fit_end_date': args["fit_end_date"],
-                'model_class': RMWCovidModel}
+                'model_class': RMWCovidModel,
+                'tc_window_size': 30,
+                'tc_window_batch_size': 3,
+                'tc_batch_increment': 2}
 
     # MODEL FITTING
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
@@ -101,13 +105,17 @@ if __name__ == "__main__":
 
     logging.info(f'{str(model.tags)}: Running forward sim')
 
+    # SIMULATE MULTIPLE VALUES FOR TC
+    obs_hosp_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
+    sim_hosp_df = do_run_projection_simulations(model,n_sims=200,restore_tc=True)
     # MODEL PLOTS
     xmin = datetime.datetime.strptime(args["report_start_date"],"%Y-%m-%d").date()
     xmax = datetime.datetime.strptime(args["end_date"],"%Y-%m-%d").date()
     fig = plt.figure(figsize=(10, 10), dpi=300)
     ax = fig.add_subplot(211)
-    hosps_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
-    hosps_df.plot(ax=ax)
+    obs_hosp_df.plot(ax)
+    #hosps_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
+    #hosps_df.plot(ax=ax)
     ax.set_xlim(xmin, xmax)
     ax = fig.add_subplot(212)
     plot_transmission_control(model, ax=ax)

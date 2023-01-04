@@ -12,6 +12,7 @@ import pandas as pd
 from scipy import optimize as spo
 from matplotlib import pyplot as plt
 import matplotlib.ticker as mtick
+import numpy as np
 """ Local Imports """
 from covid_model import RMWCovidModel
 from covid_model.analysis.charts import plot_transmission_control
@@ -40,12 +41,17 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
     # define initial states
     regions = model.regions if regions is None else regions
     tc = {t: model.tc[t] for t in model.tc.keys() if tstart <= t <= tend}
-    tc_ts  = list(tc.keys())
+    tc_ts = list(tc.keys())
+    # Testing with using the variance from the
     yd_start = model.y0_dict if yd_start is None else yd_start
     y0 = model.y0_from_dict(yd_start)
     trange = range(tstart, tend+1)
     # hrf_finder
     # To take out hrf: change 'estimated_actual' to 'observed':
+    #ydata_tmp = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed']
+    #ydata = ydata_tmp.to_numpy().flatten("F")
+    #ystd = ydata_tmp.unstack(level=0).rolling(30,min_periods=0).std().bfill().stack().reorder_levels([1,0]).to_numpy().flatten("F")
+    #ystd[ystd == 0] = 1.0
     ydata = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F')
 
     def tc_list_to_dict(tc_list):
@@ -87,8 +93,10 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
         ydata=ydata,
         p0=[tc[t][region] for t in tc_ts for region in model.regions],
         bounds=([tc_min] * len(tc_ts) * len(regions), [tc_max] * len(tc_ts) * len(regions)))
-    fitted_tc = tc_list_to_dict(fitted_tc)
-    return fitted_tc, fitted_tc_cov
+
+    #fitted_tc_dict = tc_list_to_dict(fitted_tc)
+    tc_ts_dict = {i:tc_t for i,tc_t in enumerate(tc_ts)}
+    return tc_ts_dict, fitted_tc, fitted_tc_cov
 
 
 def do_single_fit(tc_0=0.75,
@@ -207,9 +215,12 @@ def do_single_fit(tc_0=0.75,
     for i, (tstart, tend) in enumerate(zip(batch_tstarts, batch_tends)):
         t0 = perf_counter()
         yd_start = model.y_dict(tstart) if tstart != 0 else model.y0_dict
-        fitted_tc, fitted_tc_cov = __single_batch_fit(model, tc_min=tc_min, tc_max=tc_max, yd_start=yd_start, tstart=tstart, tend=tend)
+        fitted_tc_index, fitted_tc_vec, fitted_tc_cov = __single_batch_fit(model, tc_min=tc_min, tc_max=tc_max, yd_start=yd_start, tstart=tstart, tend=tend)
+        model.update_tc_fit_history(tc_vec_idcs={i: fitted_tc_index},
+                                    tc_vecs={i: fitted_tc_vec},
+                                    tc_cov_mats={i: fitted_tc_cov})
         model.tags['fit_batch'] = str(i)
-        logger.info(f'{str(model.tags)}: Transmission control fit {i + 1}/{len(batch_tstarts)} completed in {perf_counter() - t0} seconds: {fitted_tc}')
+        logger.info(f'{str(model.tags)}: Transmission control fit {i + 1}/{len(batch_tstarts)} completed in {perf_counter() - t0} seconds: {fitted_tc_vec}')
 
         if write_batch_results:
             logger.info(f'{str(model.tags)}: Uploading batch results')
@@ -219,7 +230,6 @@ def do_single_fit(tc_0=0.75,
         # simulate the model and save a picture of the output
         forward_sim_plot(model)
 
-    model.tc_cov = fitted_tc_cov
     model.tags['run_type'] = 'fit'
     logger.info(f'{str(model.tags)}: fitted TC: {model.tc}')
 
@@ -532,3 +542,43 @@ def do_fit_scenarios(base_model_args, scenario_args_list, fit_args, multiprocess
 
 def do_create_immunity_decay_curves(model, cmpt_attrs):
     print("test")
+
+def do_run_projection_simulations(model,n_sims=1000,seed=1,restore_tc=True):
+    # Random generator
+    rng = np.random.default_rng(seed)
+    # Get the last fit batch
+    last_batch_idx = max(model.tc_vec_idcs.keys())
+    tc_vec_idcs = model.tc_vec_idcs[last_batch_idx]
+    tc_vec = model.tc_vecs[last_batch_idx]
+    tc_vec_cov = model.tc_cov_mats[last_batch_idx]
+    tc_samples = rng.multivariate_normal(mean=tc_vec,cov=tc_vec_cov,size=n_sims)
+
+    restore_tc_dict = {k:model.tc[k] for k in tc_vec_idcs.values()} if restore_tc else None
+
+    # Get the index just before the first value of TC that we will be changing.
+    min_tc_t = min(tc_vec_idcs.values())
+    tmp_dict = {}
+    # Stuff for printing to log
+    n_sims_count = 0
+    n_time = perf_counter()
+    log_thresh_sec = 10
+    for c,tc_sim in enumerate(tc_samples):
+        sim_tc = {tc_t:{region:tc_sim[v_i*i] for i,region in enumerate(model.regions)} for v_i,tc_t in tc_vec_idcs.items()}
+        model.update_tc(sim_tc,replace=False)
+        # Solution is the prior solution from the day just before the first TC change.
+        # We start solving from the TC change forward.
+        model.solve_seir(y0=model.solution_y[min_tc_t-1],tstart=min_tc_t)
+        tmp_dict[c] = model.modeled_vs_observed_hosps()
+        elapsed_time = perf_counter() - n_time
+        n_sims_count += 1
+        if elapsed_time >= log_thresh_sec:
+            logger.info(f'{str(model.tags)}: Simulation {c+1}/{tc_samples.shape[0]} complete, ({n_sims_count/elapsed_time:.2}sims/sec)')
+            n_time = perf_counter()
+            n_sims_count = 0
+
+    if restore_tc:
+        model.update_tc(restore_tc_dict,replace=False)
+
+    tmp_df = pd.concat(tmp_dict,axis=0,names=["sim_num"])
+    tmp_df = tmp_df.reset_index(level="sim_num").pivot(columns="sim_num",values="modeled_observed")
+    return tmp_df

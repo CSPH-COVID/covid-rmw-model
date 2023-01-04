@@ -81,6 +81,11 @@ class RMWCovidModel:
         self.params_trange = None
         self.solution_y = None
 
+        # Model fitting parameters
+        self.__tc_vec_idcs = {}
+        self.__tc_cov_mats = {}
+        self.__tc_vecs = {}
+
         # data related params
         self.__params_defs = json.load(open('covid_model/input/rmw_params.json'))  # default params
         self.__region_defs = json.load(open('covid_model/input/rmw_region_definitions.json'))  # default value
@@ -620,6 +625,21 @@ class RMWCovidModel:
 
         """
         return self.attr_names[1:]
+
+    @property
+    def tc_cov_mats(self):
+        """A dictionary of the covariance matrices for each batch of the fitting process, keyed by batch"""
+        return self.__tc_cov_mats
+
+    @property
+    def tc_vecs(self):
+        """A dictionary of the historical TC vectors from the fitting process, keyed by batch"""
+        return self.__tc_vecs
+
+    @property
+    def tc_vec_idcs(self):
+        """A dictionary of the bounds (tstart,tend) for each batch of the TC fitting process, keyed by batch"""
+        return self.__tc_vec_idcs
 
     def update_compartments(self):
         """Construct compartments using the attributes, and other convenience data structures related to compartments
@@ -1539,6 +1559,42 @@ class RMWCovidModel:
         # Testing changing the vaccination to every week
         self.params_trange = sorted(list(set.union(*[set(param.keys()) for param_key in self.params_by_t.values() for param in param_key.values()])))
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
+
+    def update_tc_fit_history(self, tc_vecs=None, tc_cov_mats=None, tc_vec_idcs=None, update=True):
+        """ Update the historical parameters for TC from each batch of the fitting process.
+        Parameters
+        ----------
+        tc_vecs - Dictionary of TC vectors, keyed by batch number.
+        tc_cov_mats - Dictionary of TC covariance estimate matrices, keyed by batch number
+        tc_vecs_idcs - Dictionary of indices into the model's TC dictionary, keyed by batch number
+        update - Boolean value. If true, values for tc_vecs and tc_cov_mats update values with the same keys. If false,
+                 all of tc_vecs and tc_cov_mats are overwritten with the inputs to this function.
+
+        Returns
+        -------
+        None
+        """
+
+        if tc_vecs is None and tc_cov_mats is None and tc_vec_idcs is None:
+            raise ValueError("Calling update_tc_fit_history when both tc_vecs and tc_cov_mats are None!")
+
+        if tc_vecs is not None:
+            if update:
+                self.__tc_vecs.update(tc_vecs)
+            else:
+                self.__tc_vecs = tc_vecs
+
+        if tc_cov_mats is not None:
+            if update:
+                self.__tc_cov_mats.update(tc_cov_mats)
+            else:
+                self.__tc_cov_mats = tc_cov_mats
+
+        if tc_vec_idcs is not None:
+            if update:
+                self.__tc_vec_idcs.update(tc_vec_idcs)
+            else:
+                self.__tc_vec_idcs = tc_vec_idcs
 
     def update_tc(self, tc, replace=True, update_lookup=True):
         """set TC at different points in time, and update the lookup dictionary that quickly determines which TC is relevant for a given time
