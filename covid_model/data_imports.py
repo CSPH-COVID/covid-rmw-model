@@ -75,6 +75,40 @@ class ExternalData:
         return pd.read_sql(con=self.engine, **args)
 
 
+class ExternalRegionDefs(ExternalData):
+    """Class for retrieving vaccination projection parameters from the database.
+
+    """
+    def fetch_from_db(self, **args) -> pd.DataFrame:
+        """Retrieve vaccination projection parameters from the database."""
+        with open("covid_model/sql/region_defs.sql","r") as sql:
+            df = pd.read_sql(sql.read(),
+                             self.engine,
+                             index_col="region_id")
+        return df
+
+
+class ExternalPopulation(ExternalData):
+    """Class for retrieving population data from the database.
+
+    """
+    def fetch_from_db(self) -> pd.DataFrame:
+        """Retrieve population data from database using query in """
+        with open("covid_model/sql/cste_population.sql","r") as sql:
+            df = pd.read_sql(sql.read(),
+                             self.engine,
+                             index_col="region_id")\
+                .rename(columns={"n1":"0-17","n2":"18-64","n3":"65+"})
+
+        # Verify that population values match by up across each row (region) and then check that the sum is 2x the
+        # value of the region_pop column. Since the other age group columns should add up to region_pop, any
+        # discrepancies mean there is a data issue.
+        bad_regions = list(df.index[df.sum(axis=1) != 2*df["region_pop"]])
+        if len(bad_regions) != 0:
+            raise RuntimeError(f"Regional population does not match population total for regions {bad_regions}.")
+        return df
+
+
 class ExternalHospsEMR(ExternalData):
     """Class for Retrieving EMResource hospitalization data from database
 
@@ -112,21 +146,28 @@ class ExternalVacc(ExternalData):
     """Class for retrieving vaccinations data from database
 
     """
-    def fetch_from_db(self, county_ids: list=None):
+    def fetch_from_db(self, region_id: str = None, county_ids: list = None):
         """Retrieve vaccinations from database using query in sql file, either for entire state or for a subset of counties
 
         Args:
-            county_ids: list of county FIPS codes that you want vaccinations for (optional)
+            region_id: region id (e.g. con, nme, etc) to fetch vaccinations for (optional)
 
         Returns:
-
+            A Dataframe containing the vaccination data.
         """
-        if county_ids is None:
+        if region_id is None:
             sql = open('covid_model/sql/vaccination_by_age_group_with_boosters_wide.sql', 'r').read()
             return pd.read_sql(sql, self.engine, index_col=['measure_date', 'age'])
         else:
-            sql = open("covid_model/sql/vaccination_by_age_with_boosters.sql","r").read()
-            return pd.read_sql(sql, self.engine, index_col=["measure_date","age"], params={"county_ids": county_ids})
+            sql = open("covid_model/sql/vaccination_by_region_by_age_group.sql","r").read()
+            return pd.read_sql(sql,self.engine,index_col=["measure_date","age"],params={"region_id":region_id})
+            #sql = open("covid_model/sql/vaccination_by_age_group_with_boosters_wide.sql","r").read()
+            #return pd.read_sql(sql,self.engine, index_col=["measure_date","age"])
+            # This query passes in region/county IDs which can be used to subset the data (Should only be used if the
+            # population scaling is turned OFF).
+            #sql = open("covid_model/sql/vaccination_by_age_with_boosters.sql","r").read()
+            #return pd.read_sql(sql, self.engine, index_col=["measure_date","age"], params={"county_ids": county_ids})
+
             # Old
             #sql = open('covid_model/sql/vaccination_by_age_group_with_boosters_wide.sql', 'r').read()
             #return pd.read_sql(sql, self.engine, index_col=['measure_date', 'age'])

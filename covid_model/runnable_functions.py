@@ -13,14 +13,14 @@ from scipy import optimize as spo
 from matplotlib import pyplot as plt
 import matplotlib.ticker as mtick
 """ Local Imports """
-from covid_model import CovidModel
+from covid_model import RMWCovidModel
 from covid_model.analysis.charts import plot_transmission_control
 from covid_model.utils import IndentLogger, setup, get_filepath_prefix, db_engine
 from covid_model.analysis.charts import plot_modeled, plot_observed_hosps, format_date_axis
 logger = IndentLogger(logging.getLogger(''), {})
 
 
-def __single_batch_fit(model: CovidModel, tc_min, tc_max, yd_start=None, tstart=None, tend=None, regions=None):
+def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tstart=None, tend=None, regions=None):
     """function to fit TC for a single batch of time for a model
 
     Only TC values which lie in the specified regions between tstart and tend will be fit.
@@ -44,7 +44,9 @@ def __single_batch_fit(model: CovidModel, tc_min, tc_max, yd_start=None, tstart=
     yd_start = model.y0_dict if yd_start is None else yd_start
     y0 = model.y0_from_dict(yd_start)
     trange = range(tstart, tend+1)
-    ydata = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['estimated_actual'].to_numpy().flatten('F')
+    # hrf_finder
+    # To take out hrf: change 'estimated_actual' to 'observed':
+    ydata = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F')
 
     def tc_list_to_dict(tc_list):
         """convert tc output of curve_fit to a dict like in our model.
@@ -103,7 +105,7 @@ def do_single_fit(tc_0=0.75,
                   outdir=None,
                   write_results=True,
                   write_batch_results=False,
-                  model_class=CovidModel,
+                  model_class=RMWCovidModel,
                   **model_args):
     """ Fits TC for the model between two dates, and does the fit in batches to make the solving easier
 
@@ -304,7 +306,7 @@ def do_multiple_fits(model_args_list, fit_args, multiprocess = None):
 
     return models
 
-
+# region_finder
 def do_regions_fit(
                     multiprocess=None,
                    **model_args):
@@ -320,7 +322,7 @@ def do_regions_fit(
     model_args_list = list(map(lambda x: {'regions': [x], **non_region_model_args, 'tags':{'region': x}}, regions))
     do_multiple_fits(model_args_list, fit_args, multiprocess=multiprocess)
 
-
+# update_variant
 def do_create_report(model, outdir, immun_variants=('ba2121',), from_date=None, to_date=None, prep_model=False, solve_model=False):
     """Create some typically required figures and data for Gov briefings.
 
@@ -471,7 +473,7 @@ def do_create_multiple_reports(models, multiprocess=None, **report_args):
         list(map(do_create_report_wrapper_nonparallel, args_list))
 
 
-def do_build_legacy_output_df(model: CovidModel):
+def do_build_legacy_output_df(model: RMWCovidModel):
     """Function to create "legacy output" file, which is a typical need for Gov briefings.
 
     creates a Pandas DataFrame containing things like prevalence, total infected, and 1-in-X numbers daily for each region
@@ -491,16 +493,14 @@ def do_build_legacy_output_df(model: CovidModel):
     age_totals = age_totals.drop(columns=['A', 'E', 'S', 'I'])
 
     age_df = pd.DataFrame()
+    # agecat_finder
+    age_df['D_age1'] = age_totals['D']['0-17']
+    age_df['D_age2'] = age_totals['D']['18-64']
+    age_df['D_age3'] = age_totals['D']['65+']
 
-    age_df['D_age1'] = age_totals['D']['0-19']
-    age_df['D_age2'] = age_totals['D']['20-39']
-    age_df['D_age3'] = age_totals['D']['40-64']
-    age_df['D_age4'] = age_totals['D']['65+']
-
-    age_df['Ih_age1'] = age_totals['Ih']['0-19']
-    age_df['Ih_age2'] = age_totals['Ih']['20-39']
-    age_df['Ih_age3'] = age_totals['Ih']['40-64']
-    age_df['Ih_age4'] = age_totals['Ih']['65+']
+    age_df['Ih_age1'] = age_totals['Ih']['0-17']
+    age_df['Ih_age2'] = age_totals['Ih']['18-64']
+    age_df['Ih_age3'] = age_totals['Ih']['65+']
 
     df = totals.join(model.new_infections).join(model.re_estimates).join(age_df)
 

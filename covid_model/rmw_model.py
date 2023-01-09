@@ -10,6 +10,7 @@ import logging
 import pickle
 """ Third Party Imports """
 import numpy as np
+#np.seterr(invalid="raise")
 import pandas as pd
 import sympy as sym
 from sympy.parsing.sympy_parser import parse_expr
@@ -18,16 +19,17 @@ import scipy.sparse as spsp
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sortedcontainers import SortedDict
+from matplotlib import pyplot as plt
 """ Local Imports """
 from covid_model.ode_flow_terms import ConstantODEFlowTerm, ODEFlowTerm
-from covid_model.data_imports import ExternalVacc, ExternalHospsEMR, ExternalHospsCOPHS, get_region_mobility_from_db
+from covid_model.data_imports import ExternalVacc, ExternalHospsEMR, ExternalHospsCOPHS, ExternalPopulation, ExternalRegionDefs, get_region_mobility_from_db
 from covid_model.utils import IndentLogger, get_filepath_prefix, get_sqa_table, db_engine
 
 logger = IndentLogger(logging.getLogger(''), {})
 
 
 # class used to run the model given a set of parameters, including transmission control (ef)
-class CovidModel:
+class RMWCovidModel:
     ####################################################################################################################
     """ Setup """
 
@@ -49,11 +51,13 @@ class CovidModel:
 
         # basic model data
         self.__attrs = OrderedDict({'seir': ['S', 'E', 'I', 'A', 'Ih', 'D'],
-                                    'age': ['0-19', '20-39', '40-64', '65+'],
+                                    # agecat_finder
+                                    'age': ['0-17', '18-64', '65+'],
                                     'vacc': ['none', 'shot1', 'shot2', 'booster1', 'booster2'],
-                                    'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba2121', 'ba45', 'vx'],
+                                    'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba2121', 'ba45', 'emv'],
                                     'immun': ['none', 'weak', 'strong'],
-                                    'region': ['coe', 'con', 'cow']})
+                                    # region_finder
+                                    'region': ['coe','con','cow','ide','idn','ids','idw','mte','mtn','mtw','nme','nmn','nms','nmw','ute','utn','uts','utw','wye','wyn','wyw']})
         # labels used when logging and writing to db.
         self.tags = {}
 
@@ -79,8 +83,10 @@ class CovidModel:
 
         # data related params
         self.__params_defs = json.load(open('covid_model/input/rmw_params.json'))  # default params
-        self.__region_defs = json.load(open('covid_model/input/rmw_region_definitions.json'))  # default value
-        self.__hosp_reporting_frac = None
+        #self.__region_defs = json.load(open('covid_model/input/rmw_region_definitions.json'))  # default value
+        self.__region_defs = None
+        # hrf_finder
+        #self.__hosp_reporting_frac = None
         self.__vacc_proj_params = None
         self.__mobility_mode = None
         self.__mobility_proj_params = None
@@ -150,6 +156,10 @@ class CovidModel:
         if engine is None:
             engine = db_engine()
 
+        # Always update region defs and parameters.
+        self.get_region_defs()
+        self.get_population_data()
+
         if any([p in self.recently_updated_properties for p in ['start_date', 'end_date', 'regions', 'region_defs']]):
             logger.debug(f"{str(self.tags)} Updating actual vaccines")
             self.set_actual_vacc(engine)
@@ -176,7 +186,8 @@ class CovidModel:
                 self.params_defs.extend(self.get_mobility_as_params())
 
         if any([p in self.recently_updated_properties for p in
-                ['start_date', 'end_date', 'regions', 'region_defs', 'hosp_reporting_frac']]):
+            # hrf_finder (?)
+                ['start_date', 'end_date', 'regions', 'region_defs']]): #, 'hosp_reporting_frac']]):
             logger.debug(f"{str(self.tags)} Setting Hospitalizations")
             self.set_hosp(engine)
 
@@ -191,21 +202,60 @@ class CovidModel:
         Args:
             engine: a database connection. if None, we will make a new connection in this method
         """
+
+        def decumulative(g):
+            # Run diff(), but keep the first row of data, which is set to NaN by the .diff() function.
+            tmp_g = g.diff()
+            tmp_g.iloc[0] = g.iloc[0]
+            return tmp_g
+
         logger.info(f"{str(self.tags)} Retrieving vaccinations data")
-        pop_by_region = {dc["attrs"]["region"]: dc["vals"]["2020-01-01"] for dc in self.params_defs if dc["param"] == "region_pop"}
-        colo_pop = sum([pop_by_region[c] for c in pop_by_region.keys() if c in {"cow","con","coe"}])
+        # region_finder
         if engine is None:
             engine = db_engine()
         logger.debug(f"{str(self.tags)} getting vaccines from db")
         actual_vacc_df_list = []
         for region in self.regions:
-            county_ids = self.region_defs[region]['counties_fips']
-            tmp_vacc = ExternalVacc(engine).fetch(county_ids=county_ids).assign(region=region).set_index('region', append=True).reorder_levels(['measure_date', 'region', 'age'])
-            if region in {"cow","con","coe"}:
-                logger.warning("WARNING!!! SCALING VACCINATION DATA BY REGIONAL POPULATION!")
-                logger.warning("REMOVE THIS WHEN THE REGIONAL DATA IS FIXED!!!!")
-                # Scale tmp_vacc by regional population proportion (pop_region/pop_total)
-                tmp_vacc = tmp_vacc * (pop_by_region[region]/colo_pop)
+            tmp_vacc = ExternalVacc(engine).fetch(region_id=region).set_index('region', append=True).reorder_levels(['measure_date', 'region', 'age'])
+            # Check that vaccinations don't exceed population for any regions.
+            vacc_data_sum = tmp_vacc.groupby(["region","age"]).sum()
+            # Get the population values for each region/age group combination.
+            pop_raw_vals = pd.DataFrame.from_dict({(p["attrs"]["region"],p["attrs"]["age"]):p["vals"]["2020-01-01"]
+                                                   for p in self.params_defs if p["param"] == "region_age_pop"},
+                                                  orient="index").squeeze()
+            pop_raw_vals.index = pd.MultiIndex.from_tuples(pop_raw_vals.index,names=["region","age"])
+            # Maximum percentages of population age groups which should have received vaccine.
+            vacc_thresh_pct = pd.DataFrame.from_dict(self.vacc_proj_params["max_cumu"])
+            vacc_thresh_pct.index.name = "age"
+            # Calculate the maximum number of people within each region/age_group combination who should have received
+            # the vaccine.
+            vacc_thresh_abs = vacc_thresh_pct.multiply(pop_raw_vals,axis="index",level="age")
+            # Check that these threshold numbers are above what we see in the vaccination data.
+            vacc_over_thresh = vacc_data_sum.gt(vacc_thresh_abs,axis="index")
+            idx_gt,col_gt = np.where(vacc_over_thresh)
+            # If we found issues, stop here and raise error
+            if len(idx_gt) != 0:
+                bad_idcs = list(zip(vacc_over_thresh.index[idx_gt],vacc_over_thresh.columns[col_gt]))
+                bad_idcs_str = "\n".join([str(x) for x in bad_idcs])
+                self.log_and_raise(f"Found {len(bad_idcs)} instances where vaccination exceeds"
+                                   f" population*max_cumu thresholds:\n{bad_idcs_str}\n"
+                                   f"Cannot continue, please fix these vaccination data issues and re-run the model.",
+                                   RuntimeError)
+            # Check that vaccination data is consistent
+            if tuple(tmp_vacc.groupby(["region","age"]).cumsum().idxmax(axis=1).unique()) != ("shot1",):
+                #TODO: If we ever change it so that shots can happen out of sequence, we will need to remove this.
+                logger.warning("Found at least one instance where a later sequence shot has a larger number of "
+                               "cumulative doses than an earlier shot (i.e. shot2 > shot1). This will break the "
+                               "compartmental flows! Adjusting vaccination data to compensate, but please fix the "
+                               "issue at the data source!")
+                # Transform the data to cumulative
+                tmp_vacc_cum = tmp_vacc.groupby(["region","age"]).cumsum()
+                # Take the element-wise minimum of the current cumulative data and the data shifted to the right
+                # by one column (i.e. the previous dose's cumulative #). Fill the first column with np.inf to ensure
+                # that the original first column is preserved.
+                tmp_vacc_cum = np.minimum(tmp_vacc_cum,tmp_vacc_cum.shift(axis=1).fillna(np.inf))
+                tmp_vacc = tmp_vacc_cum.groupby(["region","age"]).apply(decumulative)
+
             actual_vacc_df_list.append(tmp_vacc)
         self.actual_vacc_df = pd.concat(actual_vacc_df_list)
         self.actual_vacc_df.index.set_names('date', level=0, inplace=True)
@@ -362,30 +412,30 @@ class CovidModel:
                     params.extend([{'param': f'mob_{to_region}_frac_from_{from_region}', 'attrs': {}, 'vals': mobility.loc[(from_region, to_region)]['frac_of_to'].to_dict()}])
 
         return params
-
-    def hosp_reporting_frac_by_t(self):
+    # hrf_finder
+    #def hosp_reporting_frac_by_t(self):
         """Construct a pandas DataFrame of the hospital reporting fraction over time
 
         Returns: a Pandas DataFrame with rows spanning the model's daterange and a column for hosp reporting fraction
 
         """
         # currently assigns the same hrf to all regions.
-        hrf = pd.DataFrame(index=self.daterange)
-        hrf['hosp_reporting_frac'] = np.nan
-        early_dates = []
-        for date, val in self.hosp_reporting_frac.items():
-            date = date if isinstance(date, dt.date) else dt.datetime.strptime(date, "%Y-%m-%d").date()
-            if date in hrf.index:
-                hrf.loc[date]['hosp_reporting_frac'] = val
-            elif date <= hrf.index[0]:
-                early_dates.append(date)
-        if len(early_dates) > 0:
+        #hrf = pd.DataFrame(index=self.daterange)
+        #hrf['hosp_reporting_frac'] = np.nan
+        #early_dates = []
+        #for date, val in self.hosp_reporting_frac.items():
+            #date = date if isinstance(date, dt.date) else dt.datetime.strptime(date, "%Y-%m-%d").date()
+            #if date in hrf.index:
+                #hrf.loc[date]['hosp_reporting_frac'] = val
+            #elif date <= hrf.index[0]:
+                #early_dates.append(date)
+        #if len(early_dates) > 0:
             # among all the dates before the start date, take the latest one
-            hrf.iloc[0] = self.hosp_reporting_frac[dt.datetime.strftime(max(early_dates), "%Y-%m-%d")]
-        hrf = hrf.ffill()
-        hrf.index.name = 'date'
-        hrf = pd.concat([hrf.assign(region=r) for r in self.attrs['region']]).set_index('region', append=True).reorder_levels([1, 0])
-        return hrf
+            #hrf.iloc[0] = self.hosp_reporting_frac[dt.datetime.strftime(max(early_dates), "%Y-%m-%d")]
+        #hrf = hrf.ffill()
+        #hrf.index.name = 'date'
+        #hrf = pd.concat([hrf.assign(region=r) for r in self.attrs['region']]).set_index('region', append=True).reorder_levels([1, 0])
+        #return hrf
 
 
     def set_hosp(self, engine=None):
@@ -417,7 +467,7 @@ class CovidModel:
         if self.regions != ['co']:
             region_name_to_shorthand = {v["name"]:k for k,v in self.region_defs.items()}
             hosps = ExternalHospsCOPHS(engine).fetch(region_ids=region_names['region'].to_list()) \
-                                            .drop(["NA"]) \
+                                            .drop(["NA"],errors="ignore") \
                                             .replace({"Region": region_name_to_shorthand})
             hosps.index = pd.to_datetime(hosps.index)
             hosps.index.name = "date"
@@ -425,11 +475,14 @@ class CovidModel:
             hosps.index = hosps.index.reorder_levels([1,0])
             hosps.index.names = ["region","date"]
             hosps.sort_index(inplace=True)
+            # Shift dates to represent the start of the week instead of the end
+            #date_level = hosps.index.get_level_values("date") - pd.Timedelta(days=6)
             date_level = hosps.index.get_level_values("date")
-            hosps = hosps.reindex(
-                pd.MultiIndex.from_product([self.regions, pd.date_range(min(date_level), max(date_level), freq="D")],
-                                           names=["region", "date"]), fill_value=0).groupby("region").rolling(7,
-                                                                                                              min_periods=0).mean()\
+            #hosps = hosps.reset_index(level="date",drop=True).set_index(date_level,append=True)
+            hosps = hosps.reindex(pd.MultiIndex.from_product([self.regions, pd.date_range(min(date_level), max(date_level), freq="D")],names=["region", "date"]),fill_value=0)\
+                .groupby("region")\
+                .rolling(7,min_periods=1)\
+                .mean()\
                 .droplevel(0)
         else:
             hosps = ExternalHospsEMR(engine).fetch() \
@@ -440,9 +493,9 @@ class CovidModel:
                 .set_index(['region', 'date']).sort_index()
         # fill in the beginning with zeros if necessary, or truncate if necessary
         hosps = hosps.reindex(pd.MultiIndex.from_product([self.regions, pd.date_range(self.start_date, max(hosps.index.get_level_values("date"))).date], names=['region', 'date']), fill_value=0)
-
-        hosps = hosps.join(self.hosp_reporting_frac_by_t())
-        hosps['estimated_actual'] = hosps['observed'] / hosps['hosp_reporting_frac']
+        # hrf_finder
+        #hosps = hosps.join(self.hosp_reporting_frac_by_t())
+        #hosps['estimated_actual'] = hosps['observed'] / hosps['hosp_reporting_frac']
         self.hosps = hosps
 
     ####################################################################################################################
@@ -786,9 +839,9 @@ class CovidModel:
         """
         self.__mobility_mode = value if value != 'none' else None
         self.recently_updated_properties.append('mobility_mode')
-
-    @property
-    def hosp_reporting_frac(self):
+    # hrf_finder
+    #@property
+    #def hosp_reporting_frac(self):
         """Dictionary defining the hospitalization reporting fraction at different points in time.
 
         This factor gets applied to reported hospitalizations to account for incomplete hospitalization reporting. The
@@ -806,18 +859,18 @@ class CovidModel:
         Returns: the hospitalization reporting fraction. Defaults to 1.
 
         """
-        return self.__hosp_reporting_frac if self.__hosp_reporting_frac is not None else {dt.datetime.strftime(self.start_date, "%Y-%m-%d"): 1}
-
-    @hosp_reporting_frac.setter
-    def hosp_reporting_frac(self, value: dict):
+        #return self.__hosp_reporting_frac if self.__hosp_reporting_frac is not None else {dt.datetime.strftime(self.start_date, "%Y-%m-%d"): 1}
+    # hrf_finder
+    #@hosp_reporting_frac.setter
+    #def hosp_reporting_frac(self, value: dict):
         """Sets the hospitalization reporting fraction.
 
         Args:
             value: a dictionary where keys are strings representing dates, and values are the fraction. e.g. {'2020-01-01': 1, '2020-02-01': 0.5}
 
         """
-        self.__hosp_reporting_frac = value
-        self.recently_updated_properties.append('hosp_reporting_frac')
+        #self.__hosp_reporting_frac = value
+        #self.recently_updated_properties.append('hosp_reporting_frac')
 
     ### Properties that take a little computation to get
 
@@ -1121,7 +1174,7 @@ class CovidModel:
             age:
         """
         pass
-
+    # hrf_finder
     def modeled_vs_observed_hosps(self):
         """Create dataframe comparing hospitalization data to modeled hospitalizations
 
@@ -1134,11 +1187,12 @@ class CovidModel:
         Returns: Pandas DataFrame with row index date / region, and four columns.
 
         """
-        df = self.solution_sum_df(['seir', 'region'])['Ih'].stack('region', dropna=False).rename('modeled_actual').to_frame()
+        df = self.solution_sum_df(['seir', 'region'])['Ih'].stack('region', dropna=False).rename('modeled_actual').to_frame() #'modeled_actual
         df = df.join(self.hosps)
-        df['hosp_reporting_frac'].ffill(inplace=True)
-        df['modeled_observed'] = df['modeled_actual'] * df['hosp_reporting_frac']
-        df = df.reindex(columns=['observed', 'estimated_actual', 'modeled_actual', 'modeled_observed'])
+        #df['hosp_reporting_frac'].ffill(inplace=True)
+        df['modeled_observed'] = df['modeled_actual']
+        #df["modeled_observed"] = df['modeled_actual'] * df['hosp_reporting_frac']
+        df = df.reindex(columns=['observed', 'modeled_observed']) #'estimated_actual', 'modeled_actual',
         df = df.reorder_levels([1, 0]).sort_index()  # put region first
         return df
 
@@ -1456,6 +1510,49 @@ class CovidModel:
                 to_cmpts = self.update_cmpt_tuple_with_attrs(from_cmpt, to_attrs, is_param_cmpt=True)
             for to_cmpt in to_cmpts:
                 self.set_param_by_t(param, from_cmpt=from_cmpt, to_cmpt=to_cmpt, vals=vals, mults=mults)
+
+    def get_region_defs(self):
+        """Fetch the region definitions from BigQuery and update self.region_defs
+        :return:
+        """
+        logger.info(f"{str(self.tags)} Retrieving regional definitions")
+        engine = db_engine()
+        region_defs_df = ExternalRegionDefs(engine).fetch()
+        region_defs_dict = region_defs_df\
+            .groupby("region_id")\
+            .agg({"name":"first","counties":list,"counties_fips":list})\
+            .to_dict(orient="index")
+        self.region_defs = region_defs_dict
+
+
+    def get_population_data(self):
+        """Fetch the population parameters from BigQuery, and
+        :return:
+        """
+        logger.info(f"{str(self.tags)} Retrieving population data")
+        engine = db_engine()
+        # Get the DataFrame of populations
+        external_pop_df = ExternalPopulation(engine).fetch()
+        # Convert to a list of records so we can iterate
+        external_pop_records = external_pop_df.melt(ignore_index=False).to_records()
+        # Create a new dictionary and update param_defs.
+        pop_params = []
+        for region,age,pop in external_pop_records:
+            is_reg_age_pop = (age != "region_pop")
+            tmp_d = {"param":"region_age_pop" if is_reg_age_pop else "region_pop",
+                     "attrs":{"region": region},
+                     "vals":{"2020-01-01": pop}}
+            if is_reg_age_pop:
+                tmp_d["attrs"]["age"] = age
+            pop_params.append(tmp_d)
+        # Because param_defs is a list instead of a dictionary, we cannot easily update just the population parameters.
+        # We first need to scan through the entire list, and return a list the non-population parameters. Then we can
+        # append the updated pop_params list to this list and set a new value for param_defs.
+        non_pop_params = [p for p in self.params_defs if p["param"] not in {"region_pop","region_age_pop"}]
+        # After having dropped all current population params, we will add the new population params.
+        # This assumes that we update all population parameters each time.
+        self.params_defs = non_pop_params + pop_params
+        self.recently_updated_properties.append("params_defs")
 
     def build_param_lookups(self, apply_vaccines=True, vacc_delay=14):
         """ combine param_defs list and vaccination_data into a time indexed parameters dictionary
@@ -1792,7 +1889,8 @@ class CovidModel:
                 continue
             seed_param = f'{variant}_seed'
             from_variant = self.attrs['variant'][0]  # first variant
-            self.add_flows_from_attrs_to_attrs({'seir': 'S', 'age': '40-64', 'vacc': 'none', 'variant': from_variant, 'immun': 'none'}, {'seir': 'E', 'variant': variant}, constant=seed_param)
+            # agecat_finder
+            self.add_flows_from_attrs_to_attrs({'seir': 'S', 'age': '18-64', 'vacc': 'none', 'variant': from_variant, 'immun': 'none'}, {'seir': 'E', 'variant': variant}, constant=seed_param)
 
         # exposure
         logger.debug(f"{str(self.tags)} Building transmission flows")
@@ -1829,6 +1927,7 @@ class CovidModel:
         self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'I'}, to_coef='1 / alpha * pS')
         self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'A'}, to_coef='1 / alpha * (1 - pS)')
         # assume no one is receiving both pax and mab
+        # removing mab_hosp_adj
         self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * (1 - mab_prev - pax_prev)')
         self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * mab_prev * mab_hosp_adj')
         self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * pax_prev * pax_hosp_adj')
@@ -2116,14 +2215,15 @@ class CovidModel:
         Returns: A string representation of a JSON object suitable for writing to the database
 
         """
+        # hrf_finder (maybe)
         logger.debug(f"{str(self.tags)} Serializing model to json")
         keys = ['base_spec_id', 'spec_id', 'tags',
-                '_CovidModel__start_date', '_CovidModel__end_date', '_CovidModel__attrs', '_CovidModel__tc',
-                'tc_t_prev_lookup', '_CovidModel__params_defs',
-                '_CovidModel__region_defs', '_CovidModel__regions', '_CovidModel__vacc_proj_params',
-                '_CovidModel__mobility_mode', 'actual_mobility', 'proj_mobility', 'proj_mobility',
-                '_CovidModel__mobility_proj_params', 'actual_vacc_df', 'proj_vacc_df', 'hosps', '_CovidModel__hosp_reporting_frac',
-                '_CovidModel__y0_dict', 'max_step_size', 'ode_method']
+                '_RMWCovidModel__start_date', '_RMWCovidModel__end_date', '_RMWCovidModel__attrs', '_RMWCovidModel__tc',
+                'tc_t_prev_lookup', '_RMWCovidModel__params_defs',
+                '_RMWCovidModel__region_defs', '_RMWCovidModel__regions', '_RMWCovidModel__vacc_proj_params',
+                '_RMWCovidModel__mobility_mode', 'actual_mobility', 'proj_mobility', 'proj_mobility',
+                '_RMWCovidModel__mobility_proj_params', 'actual_vacc_df', 'proj_vacc_df', 'hosps', #'_RMWCovidModel__hosp_reporting_frac',
+                '_RMWCovidModel__y0_dict', 'max_step_size', 'ode_method']
         # add in proj_mobility
         serial_dict = OrderedDict()
         for key in keys:
@@ -2138,7 +2238,7 @@ class CovidModel:
                 serial_dict[key] = self.serialize_mob(val)
             elif key == 'hosps' and val is not None:
                 serial_dict[key] = self.serialize_hosp(val)
-            elif key == '_CovidModel__y0_dict' and self.__y0_dict is not None:
+            elif key == '_RMWCovidModel__y0_dict' and self.__y0_dict is not None:
                 serial_dict[key] = self.serialize_y0_dict(val)
             elif key == 'max_step_size':
                 serial_dict[key] = val if not np.isinf(val) else 'inf'
@@ -2155,17 +2255,17 @@ class CovidModel:
         logger.debug(f"{str(self.tags)} repopulating model from serialized json")
         raw = json.loads(s)
         for key, val in raw.items():
-            if key in ['_CovidModel__start_date', '_CovidModel__end_date']:
+            if key in ['_RMWCovidModel__start_date', '_RMWCovidModel__end_date']:
                 self.__dict__[key] = dt.datetime.strptime(val, "%Y-%m-%d").date()
-            elif key == '_CovidModel__tc':
-                self.__dict__[key] = CovidModel.unserialize_tc(val)
+            elif key == '_RMWCovidModel__tc':
+                self.__dict__[key] = RMWCovidModel.unserialize_tc(val)
             elif key in ['actual_vacc_df', 'proj_vacc_df'] and val is not None:
-                self.__dict__[key] = CovidModel.unserialize_vacc(val)
+                self.__dict__[key] = RMWCovidModel.unserialize_vacc(val)
             elif key in ['actual_mobility', 'proj_mobility'] and val is not None:
-                self.__dict__[key] = CovidModel.unserialize_mob(val)
+                self.__dict__[key] = RMWCovidModel.unserialize_mob(val)
             elif key == 'hosp' and val is not None:
-                self.__dict__[key] = CovidModel.unserialize_hosp(val)
-            elif key == '_CovidModel__y0_dict':
+                self.__dict__[key] = RMWCovidModel.unserialize_hosp(val)
+            elif key == '_RMWCovidModel__y0_dict':
                 self.__dict__[key] = self.unserialize_y0_dict(val)
             elif key == 'max_step_size':
                 self.__dict__[key] = np.inf if val == 'inf' else float(val)
