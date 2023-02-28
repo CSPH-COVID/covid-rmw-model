@@ -65,6 +65,8 @@ def wrapper_run(args: dict):
 
     scenario_fit_args = {
         'outdir': outdir,
+        'start_date': args["start_date"],
+        'end_date': args["end_date"],
         'fit_start_date': scenario_fit_start_date,
         'fit_end_date': args["scenarios_fit_end_date"],
         'model_class': RMWCovidModel,
@@ -73,40 +75,38 @@ def wrapper_run(args: dict):
         'pre_solve_model': True
     }
     # Set up the arguments for the scenario fits.
-    vacc_eff_lt5 = 0.5
     scenario_model_args = []
     scenario_params = json.load(open(base_model_args["params_defs"]))
-    for (weak_escape, strong_escape) in [(0.6, 0.15), (0.66, 0.165), (0.72, 0.18), (0.54, 0.135)]:
+    # ,  (0.8, 0.2, 0.04, 0.02), (0.95, 0.5, 0.1, 0.08),(0.9, 0.3, 0.05, 0.03)
+    # +/- 20% for all parameters
+    for (weak_escape, weak_omc_escape, strong_escape, strong_omc_escape) in [(0.64, 0.32, 0.192, 0.096), (0.8, 0.4, 0.24, 0.12), (0.96, 0.48, 0.288, 0.144)]:
+        weak_omicron_param = [{"param": "immune_escape",
+                       "from_attrs": {"immun": "weak",
+                                      "variant": ["omicron", "ba2", "ba2121", "ba45","bq"]},
+                       "to_attrs": {"variant": ["xbb"]},
+                       "vals": {"2020-01-01": weak_omc_escape},
+                       "desc": "emerging variants immune escape value, weak immunity"}]
+        strong_omicron_param = [{"param": "immune_escape",
+                         "from_attrs": {"immun": "strong",
+                                        "variant": ["omicron", "ba2", "ba2121", "ba45", "bq"]},
+                         "to_attrs": {"variant": ["xbb"]},
+                         "vals": {"2020-01-01": strong_omc_escape},
+                         "desc": "emerging variants immune escape value, strong immunity"}]
         weak_param = [{"param": "immune_escape",
                        "from_attrs": {"immun": "weak",
-                                      "variant": ["none", "wildtype", "alpha", "delta",
-                                                  "omicron", "ba2", "ba2121", "ba45"]},
-                       "to_attrs": {"variant": ["emv"]},
+                                      "variant": ["none", "wildtype", "alpha", "delta"]},
+                       "to_attrs": {"variant": ["xbb"]},
                        "vals": {"2020-01-01": weak_escape},
                        "desc": "emerging variants immune escape value, weak immunity"}]
         strong_param = [{"param": "immune_escape",
                          "from_attrs": {"immun": "strong",
-                                        "variant": ["none", "wildtype", "alpha", "delta",
-                                                    "omicron", "ba2", "ba2121", "ba45"]},
-                         "to_attrs": {"variant": ["emv"]},
+                                        "variant": ["none", "wildtype", "alpha", "delta"]},
+                         "to_attrs": {"variant": ["xbb"]},
                          "vals": {"2020-01-01": strong_escape},
                          "desc": "emerging variants immune escape value, strong immunity"}]
-        lt5_vacc_adjust = [{"param": "immunity",
-                            "attrs": {'age': '0-19', 'vacc': 'shot1'},
-                            "mults": {"2020-01-01": 1,
-                                      "2022-06-24": 0.99 + 0.01 * vacc_eff_lt5,
-                                      "2022-06-30": 0.98 + 0.02 * vacc_eff_lt5,
-                                      "2022-07-08": 0.97 + 0.03 * vacc_eff_lt5,
-                                      "2022-07-19": 0.96 + 0.04 * vacc_eff_lt5,
-                                      "2022-07-29": 0.95 + 0.05 * vacc_eff_lt5,
-                                      "2022-08-11": 0.94 + 0.06 * vacc_eff_lt5,
-                                      "2022-08-30": 0.93 + 0.07 * vacc_eff_lt5,
-                                      "2022-09-26": 0.92 + 0.08 * vacc_eff_lt5,
-                                      "2022-10-26": 0.91 + 0.09 * vacc_eff_lt5, },
-                            "desc": "weighted average using share of 0-19 getting shot1 who are under 5"}]
-        scenario_model_args.append({'params_defs': scenario_params + weak_param + strong_param + lt5_vacc_adjust,
-                                    'tags': {'emv_escape_weak': weak_escape,
-                                             'emv_escape_strong': strong_escape}})
+        scenario_model_args.append({'params_defs': scenario_params + weak_param + strong_param + weak_omicron_param + strong_omicron_param,
+                                    'tags': {'xbb_escape_weak': weak_escape,
+                                             'xbb_escape_strong': strong_escape}})
     # SET SPEC IDs
     # Number of fits is the number of scenarios plus the base model fit
     n_fits = len(scenario_model_args) + 1
@@ -114,14 +114,18 @@ def wrapper_run(args: dict):
     base_model_args["spec_id"] = spec_ids[0]
     for scen, spec_id in zip(scenario_model_args, spec_ids[1:]):
         scen["base_spec_id"] = spec_ids[0]
+        #scen["base_spec_id"] = 4887
         scen["spec_id"] = spec_id
     # MODEL FITTING
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
     base_model = do_single_fit(**base_model_args)
+    #base_model = RMWCovidModel(base_spec_id=4887)
+    #base_model.prep()
+    base_model.solve_seir()
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
         pickle.dump(base_model.solution_ydf, f)
-    base_model.solve_seir()
+    #base_model.solve_seir()
 
     # MODEL OUTPUTS
     logging.info('Projecting')
@@ -134,25 +138,32 @@ def wrapper_run(args: dict):
         get_filepath_prefix(outdir, tags=base_model.tags) + 'full_projection.csv')
 
     # SCENARIO FITTING
-    # logging.info(f"{str(base_model.tags)}: Running scenarios")
-    # models = do_fit_scenarios(base_model_args=base_model_args, scenario_args_list=scenario_model_args,
-    #                           fit_args=scenario_fit_args)
-    # for model in models:
-    #     xmin = datetime.datetime.strptime(args["report_start_date"], "%Y-%m-%d").date()
-    #     xmax = datetime.datetime.strptime(args["end_date"], "%Y-%m-%d").date()
-    #     fig = plt.figure(figsize=(10, 10), dpi=300)
-    #     ax = fig.add_subplot(211)
-    #     hosps_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
-    #     hosps_df.plot(ax=ax)
-    #     ax.set_xlim(xmin, xmax)
-    #     ax = fig.add_subplot(212)
-    #     plot_transmission_control(model, ax=ax)
-    #     ax.set_xlim(xmin, xmax)
-    #     plt.savefig(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.png')
-    #     plt.close()
-    #     hosps_df.to_csv(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.csv')
-    #     json.dump(model.tc, open(get_filepath_prefix(outdir, tags=model.tags) + 'model_forecast_tc.json', 'w'))
-
+    logging.info(f"{str(base_model.tags)}: Running scenarios")
+    models = do_fit_scenarios(base_model_args=base_model_args, scenario_args_list=scenario_model_args,
+                              fit_args=scenario_fit_args)
+    for model in models:
+        do_create_report(model,
+                         outdir=outdir,
+                         immun_variants=["xbb"],
+                         from_date=args["report_start_date"],
+                         prep_model=False,
+                         solve_model=True)
+        xmin = datetime.datetime.strptime(args["start_date"], "%Y-%m-%d").date()
+        xmax = datetime.datetime.strptime(args["end_date"], "%Y-%m-%d").date()
+        fig = plt.figure(figsize=(10, 10), dpi=300)
+        ax = fig.add_subplot(211)
+        hosps_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
+        hosps_df.plot(ax=ax)
+        ax.set_xlim(xmin, xmax)
+        ax = fig.add_subplot(212)
+        plot_transmission_control(model, ax=ax)
+        ax.set_xlim(xmin, xmax)
+        plt.savefig(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.png')
+        plt.close()
+        hosps_df.to_csv(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.csv')
+        json.dump(model.tc, open(get_filepath_prefix(outdir, tags=model.tags) + 'model_forecast_tc.json', 'w'))
+        with open(get_filepath_prefix(outdir, tags=model.tags) + f"model_solutionydf.pkl", "wb") as f:
+            pickle.dump(model.solution_ydf, f)
     logging.info("Task finished.")
 
 

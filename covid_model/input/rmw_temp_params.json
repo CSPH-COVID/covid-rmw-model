@@ -345,7 +345,7 @@
     "desc": "4% of first boosters among 65+ whose first and second shots failed fail to confer immunity"
   },
   {
-    "param": "booster2_fail_rate",
+    "param": "booster23_fail_rate",
     "attrs": {
       "age": "0-17"
     },
@@ -355,7 +355,7 @@
     "desc": "1% of second boosters among 0-17 whose first, second, and first booster shots failed fail to confer immunity"
   },
   {
-    "param": "booster2_fail_rate",
+    "param": "booster23_fail_rate",
     "attrs": {
       "age": "18-64"
     },
@@ -365,7 +365,37 @@
     "desc": "1% of second boosters among 18-64 whose first, second, and first booster shots failed fail to confer immunity"
   },
   {
-    "param": "booster2_fail_rate",
+    "param": "booster23_fail_rate",
+    "attrs": {
+      "age": "65+"
+    },
+    "vals": {
+      "2020-01-01": 0.04
+    },
+    "desc": "4% of second boosters among 65+ whose first, second, and first booster shots failed fail to confer immunity"
+  },
+    {
+    "param": "booster3_fail_rate",
+    "attrs": {
+      "age": "0-17"
+    },
+    "vals": {
+      "2020-01-01": 0.01
+    },
+    "desc": "1% of second boosters among 0-17 whose first, second, and first booster shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster3_fail_rate",
+    "attrs": {
+      "age": "18-64"
+    },
+    "vals": {
+      "2020-01-01": 0.01
+    },
+    "desc": "1% of second boosters among 18-64 whose first, second, and first booster shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster3_fail_rate",
     "attrs": {
       "age": "65+"
     },
@@ -480,8 +510,7 @@
     "param": "severe_immunity",
     "attrs": {
       "vacc": [
-        "booster1",
-        "booster2"
+        "booster1"
       ],
       "variant": [
         "omicron",
@@ -492,6 +521,45 @@
     },
     "mults": {
       "2020-01-01": 0.9
+    },
+    "desc": "90% of people who have been boosted are protected against severe Omicron"
+  },
+  {
+    "param": "severe_immunity",
+    "attrs": {
+      "vacc": [
+        "booster23"
+      ],
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba2121",
+        "ba45",
+        "bq",
+        "xbb"
+      ]
+    },
+    "mults": {
+      "2020-01-01": 0.9,
+      "2022-08-31": 0.95
+    },
+    "desc": "90% of people who have been boosted are protected against severe Omicron"
+  },
+    {
+    "param": "severe_immunity",
+    "attrs": {
+      "vacc": [
+        "booster3"
+      ],
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba2121",
+        "ba45"
+      ]
+    },
+    "mults": {
+      "2020-01-01": 0.95
     },
     "desc": "90% of people who have been boosted are protected against severe Omicron"
   },
@@ -579,7 +647,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.03
+      "2020-01-01": 0.015
     },
     "desc": "given prior infection with BA.1 or BA.2, 3% of strongly immune individuals can get reinfected with BA.2.12.1"
   },
@@ -598,7 +666,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.25
+      "2020-01-01": 0.15
     },
     "desc": "given prior infection with BA.1 or BA.2, 25% of weakly immune individuals can get reinfected with BA.2.12.1"
   },
@@ -619,7 +687,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.15
+      "2020-01-01": 0.08
     },
     "desc": "given prior infection with a pre-Omicron variant, 15% of strongly immune individuals can get reinfected with BA.4/5"
   },
@@ -640,7 +708,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.80
+      "2020-01-01": 0.60
     },
     "desc": "given prior infection with a pre-Omicron variant, 80% of weakly immune individuals can get reinfected with BA.4/5"
   },
@@ -680,7 +748,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.40
+      "2020-01-01": 0.30
     },
     "desc": "given prior infection with an Omicron variant, 40% of weakly immune individuals can get reinfected with BA.4/5"
   },
@@ -697,7 +765,7 @@
     "attrs": {
       "vacc": [
         "booster1",
-        "booster2"
+        "booster23"
       ]
     },
     "mults": {
@@ -2031,8 +2099,8 @@
     "attrs": null,
     "vals": {
       "2020-01-01": 0,
-      "2022-03-15": 4.4,
-      "2022-03-25": 0
+      "2022-02-05": 1.9,
+      "2022-02-06": 0
     },
     "desc": "scaled BA.4/5 seed for reference region (CO North)"
   },
@@ -2247,17 +2315,17 @@
     "desc": ""
   },
 {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": null,
     "vals": {
       "2020-01-01": 0,
-      "2022-09-15": 4.4,
-      "2022-10-15": 0
+      "2022-08-15": 1.9,
+      "2022-08-16": 0
     },
     "desc": "scaled emerging variant seed for reference region (CO North)"
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "coe"
     },
@@ -2267,7 +2335,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "con"
     },
@@ -2277,7 +2345,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "cow"
     },
@@ -2287,7 +2355,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "ide"
     },
@@ -2297,7 +2365,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "idn"
     },
@@ -2307,7 +2375,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "ids"
     },
@@ -2317,7 +2385,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "idw"
     },
@@ -2327,7 +2395,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "mte"
     },
@@ -2337,7 +2405,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "mtn"
     },
@@ -2347,7 +2415,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "mtw"
     },
@@ -2357,7 +2425,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "nme"
     },
@@ -2367,7 +2435,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "nmn"
     },
@@ -2377,7 +2445,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "nms"
     },
@@ -2387,7 +2455,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "nmw"
     },
@@ -2397,7 +2465,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "ute"
     },
@@ -2407,7 +2475,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "utn"
     },
@@ -2417,7 +2485,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "uts"
     },
@@ -2427,7 +2495,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "utw"
     },
@@ -2437,7 +2505,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "wye"
     },
@@ -2447,7 +2515,7 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
     "attrs": {
       "region": "wyn"
     },
@@ -2457,7 +2525,227 @@
     "desc": ""
   },
   {
-    "param": "emv_seed",
+    "param": "bq_seed",
+    "attrs": {
+      "region": "wyw"
+    },
+    "mults": {
+      "2020-01-01": 0.03353407
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": null,
+    "vals": {
+      "2020-01-01": 0,
+      "2022-11-01": 5.2,
+      "2022-11-08": 0
+    },
+    "desc": "scaled emerging variant seed for reference region (CO North)"
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "coe"
+    },
+    "mults": {
+      "2020-01-01": 0.05086667
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "con"
+    },
+    "mults": {
+      "2020-01-01": 1.0
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "cow"
+    },
+    "mults": {
+      "2020-01-01": 0.09635088
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "ide"
+    },
+    "mults": {
+      "2020-01-01": 0.06310716
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "idn"
+    },
+    "mults": {
+      "2020-01-01": 0.04514256
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "ids"
+    },
+    "mults": {
+      "2020-01-01": 0.03402168
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "idw"
+    },
+    "mults": {
+      "2020-01-01": 0.10367545
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "mte"
+    },
+    "mults": {
+      "2020-01-01": 0.03227685
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "mtn"
+    },
+    "mults": {
+      "2020-01-01": 0.01146730
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "mtw"
+    },
+    "mults": {
+      "2020-01-01": 0.07473832
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "nme"
+    },
+    "mults": {
+      "2020-01-01": 0.02859627
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "nmn"
+    },
+    "mults": {
+      "2020-01-01": 0.03208236
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "nms"
+    },
+    "mults": {
+      "2020-01-01": 0.07708969
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "nmw"
+    },
+    "mults": {
+      "2020-01-01": 0.13332212
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "ute"
+    },
+    "mults": {
+      "2020-01-01": 0.02190727
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "utn"
+    },
+    "mults": {
+      "2020-01-01": 0.11366519
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "uts"
+    },
+    "mults": {
+      "2020-01-01": 0.04462114
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "utw"
+    },
+    "mults": {
+      "2020-01-01": 0.26188184
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "wye"
+    },
+    "mults": {
+      "2020-01-01": 0.04265239
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
+    "attrs": {
+      "region": "wyn"
+    },
+    "mults": {
+      "2020-01-01": 0.01135673
+    },
+    "desc": ""
+  },
+  {
+    "param": "xbb_seed",
     "attrs": {
       "region": "wyw"
     },
@@ -2594,12 +2882,32 @@
       ],
       "vacc": [
         "shot2",
-        "booster1",
-        "booster2"
+        "booster1"
       ]
     },
     "mults": {
       "2020-01-01": 0.594
+    },
+    "desc": "Omicrons have a 40.6% lower proportion of symptomatic infections for those who are vaccinated compared to Delta"
+  },
+  {
+    "param": "pS",
+    "attrs": {
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba2121",
+        "ba45",
+        "bq",
+        "xbb"
+      ],
+      "vacc": [
+        "booster23"
+      ]
+    },
+    "mults": {
+      "2020-01-01": 0.594,
+      "2022-08-31": 0.5
     },
     "desc": "Omicrons have a 40.6% lower proportion of symptomatic infections for those who are vaccinated compared to Delta"
   },
@@ -2782,9 +3090,19 @@
     },
     "desc": "monoclonal antibodies reduce hospital length of stay by 28%"
   },
-    {"param": "emv_seed", "attrs":  null, "vals":  {"2020-01-01": 0, "2022-09-20": 5, "2022-10-30": 0}, "desc": "baseline Variant X seeding value for scenarios"},
-    {"param": "betta", "attrs": {"variant": "emv"}, "mults": {"2020-01-01": 8.581}, "desc": "Variant X is equally as infectious as BA.5"},
-    {"param": "hosp", "attrs": {"variant": "emv"}, "mults": {"2020-01-01": 1}, "desc": "baseline multiplier for Variant X hospitalization rate"},
-    {"param": "immune_escape", "from_attrs": {"immun": "strong" ,"variant": ["none", "wildtype", "alpha", "delta", "omicron", "ba2", "ba2121", "ba45"]}, "to_attrs": {"variant": ["emv"]}, "vals": {"2020-01-01": 0.095}, "desc": "given prior infection with any variant (or no variant), 9.5% of strongly immune individuals can get reinfected with Variant X"},
-    {"param": "immune_escape", "from_attrs": {"immun": "weak" ,"variant": ["none", "wildtype", "alpha", "delta", "omicron", "ba2", "ba2121", "ba45"]}, "to_attrs": {"variant": ["emv"]}, "vals": {"2020-01-01": 0.6}, "desc": "given prior infection with any variant (or no variant), 60% of individuals can get reinfected with Variant X"}
+  {"param": "betta", "attrs": {"variant": "bq"}, "mults": {"2020-01-01": 8.581}, "desc": "bq is equally as infectious as BA.5"},
+  {"param": "betta", "attrs": {"variant": "xbb"}, "mults": {"2020-01-01": 8.581}, "desc": "xbb is equally as infectious as BA.5"},
+  {"param": "hosp", "attrs": {"variant": "bq"}, "mults": {"2020-01-01": 1}, "desc": "baseline multiplier for bq hospitalization rate"},
+  {"param": "hosp", "attrs": {"variant": "xbb"}, "mults": {"2020-01-01": 1}, "desc": "baseline multiplier for xbb hospitalization rate"},
+  {"param": "immune_escape", "from_attrs": {"immun": "strong" ,"variant": ["omicron", "ba2", "ba2121", "ba45"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.04}, "desc": "given prior infection with any variant (or no variant), 7.5% of strongly immune individuals can get reinfected with bq"},
+  {"param": "immune_escape", "from_attrs": {"immun": "weak" ,"variant": ["omicron", "ba2", "ba2121", "ba45"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.4}, "desc": "given prior infection with any variant (or no variant), 40% of individuals can get reinfected with bq"},
+
+  {"param": "immune_escape", "from_attrs": {"immun": "strong" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.08}, "desc": "given prior infection with any variant (or no variant), 7.5% of strongly immune individuals can get reinfected with bq"},
+  {"param": "immune_escape", "from_attrs": {"immun": "weak" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.8}, "desc": "given prior infection with any variant (or no variant), 40% of individuals can get reinfected with bq"},
+
+  {"param": "immune_escape", "from_attrs": {"immun": "strong" ,"variant": ["omicron", "ba2", "ba2121", "ba45", "bq"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.12}, "desc": "given prior infection with any variant (or no variant), 8.5% of strongly immune individuals can get reinfected with xbb"},
+  {"param": "immune_escape", "from_attrs": {"immun": "weak" ,"variant": ["omicron", "ba2", "ba2121", "ba45", "bq"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.4}, "desc": "given prior infection with any variant (or no variant), 50% of individuals can get reinfected with xbb"},
+
+  {"param": "immune_escape", "from_attrs": {"immun": "strong" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.24}, "desc": "given prior infection with any variant (or no variant), 8.5% of strongly immune individuals can get reinfected with xbb"},
+  {"param": "immune_escape", "from_attrs": {"immun": "weak" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.8}, "desc": "given prior infection with any variant (or no variant), 50% of individuals can get reinfected with xbb"}
 ]
