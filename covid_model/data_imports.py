@@ -4,6 +4,7 @@ import json
 """ Third Party Imports """
 import numpy as np
 import pandas as pd
+import pickle
 """ Local Imports """
 
 
@@ -107,6 +108,21 @@ class ExternalPopulation(ExternalData):
         if len(bad_regions) != 0:
             raise RuntimeError(f"Regional population does not match population total for regions {bad_regions}.")
         return df
+
+
+class ExternalVariantProportions(ExternalData):
+    """Class to retrieve external variant proportion data from the database. Used to align variant proportions.
+
+    """
+    def fetch_from_db(self,) -> pd.DataFrame:
+        with open("/Users/andrewhill/Documents/variant_proportion/20230227_175507_xbb_escape_weak_0.8_xbb_escape_strong_0.24_fit_batch_0_run_type_fit_model_solutionydf.pkl","rb") as f:
+            raw_df = pickle.load(f)
+            raw_df.set_index(pd.date_range(start="2020-01-24",periods=len(raw_df),freq="D"),inplace=True)
+        inf_df = raw_df["I"].groupby("variant",axis=1).sum()
+        prop_df = inf_df.divide(inf_df.sum(axis=1),axis="index")
+        prop_df.loc["2020-01-24", "wildtype"] = 1.0
+        prop_df.fillna(0,inplace=True)
+        return prop_df
 
 
 class ExternalHospsEMR(ExternalData):

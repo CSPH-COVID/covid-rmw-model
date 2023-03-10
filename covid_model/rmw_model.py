@@ -22,7 +22,7 @@ from sortedcontainers import SortedDict
 from matplotlib import pyplot as plt
 """ Local Imports """
 from covid_model.ode_flow_terms import ConstantODEFlowTerm, ODEFlowTerm
-from covid_model.data_imports import ExternalVacc, ExternalHospsEMR, ExternalHospsCOPHS, ExternalPopulation, ExternalRegionDefs, get_region_mobility_from_db
+from covid_model.data_imports import ExternalVacc, ExternalHospsEMR, ExternalHospsCOPHS, ExternalPopulation, ExternalRegionDefs, ExternalVariantProportions, get_region_mobility_from_db
 from covid_model.utils import IndentLogger, get_filepath_prefix, get_sqa_table, db_engine
 
 logger = IndentLogger(logging.getLogger(''), {})
@@ -77,11 +77,13 @@ class RMWCovidModel:
         self.exposed_cmpt_idcs = {}
         self.exposed_region_lookup = {}
         self.__seeds = {}
-        self.seed_t_prev_lookup = {}
+        self.__seed_offsets = {}
+        self.variant_props = None
 
         # Model compartments, lookups, and ODE solution
         self.compartments_as_index = None
         self.Ih_compartments = None
+        self.variant_compartments = None
         self.compartments = None
         self.cmpt_idx_lookup = None
         self.param_compartments = None
@@ -166,6 +168,7 @@ class RMWCovidModel:
         # Always update region defs and parameters.
         self.get_region_defs()
         self.get_population_data()
+        self.get_variant_props()
         # Always update vaccination parameters
 
 
@@ -669,6 +672,9 @@ class RMWCovidModel:
         """
         self.compartments_as_index = pd.MultiIndex.from_product(self.attrs.values(), names=self.attr_names)
         self.Ih_compartments = self.compartments_as_index.get_level_values(0) == "Ih"
+        # IS NOT COMPATIBLE WITH MULTIPLE REGIONS THIS WILL BREAK WITH MULTIPLE REGIONS
+        # TODO: Fix this so it works with multiple regions
+        self.variant_compartments = np.concatenate([np.argwhere((self.compartments_as_index.get_level_values("variant") == v) & (self.compartments_as_index.get_level_values("seir") == "I")).squeeze() for v in self.attrs["variant"]])
         self.compartments = list(self.compartments_as_index)
         self.cmpt_idx_lookup = pd.Series(index=self.compartments_as_index, data=range(len(self.compartments_as_index))).to_dict()
         self.param_compartments = list(set(tuple(attr_val for attr_val, attr_name in zip(cmpt, self.attr_names) if attr_name in self.param_attr_names) for cmpt in self.compartments))
@@ -941,6 +947,16 @@ class RMWCovidModel:
         return self.__seeds
 
     @property
+    def seeds_with_offset(self):
+        """ Get the dictionary of variant seeds for the model, incorporating offsets."""
+        return {region:{variant: SortedDict({max(0,t+self.seed_offsets[region][variant]):s for t,s in sdict.items()}) for variant,sdict in reg_dict.items()} for region,reg_dict in self.seeds.items()}
+
+    @property
+    def seed_offsets(self):
+        """ Get the dictionary containing offsets for each variant seeding plan."""
+        return self.__seed_offsets
+
+    @property
     def params_as_dict(self):
         """Return model parameters as a nested dictionary
 
@@ -1143,6 +1159,16 @@ class RMWCovidModel:
         region_levels = self.compartments_as_index.get_level_values(-1)
         Ih = np.concatenate([self.solution_y[tstart:(tend + 1), self.Ih_compartments & (region_levels == region)].sum(axis=1) for region in regions])
         return Ih
+
+    def solution_var_props(self,tstart,tend,variants):
+        all_variants = self.attrs["variant"]
+        idx_rearr = {v:i for i,v in enumerate(all_variants)}
+        variant_idcs = self.variant_compartments
+        tmp_solution_y = self.solution_y[tstart:(tend+1)]
+        variant_inf_count = tmp_solution_y[:,variant_idcs].reshape(tmp_solution_y.shape[0],len(all_variants),-1).sum(axis=-1)
+        variant_inf_props = variant_inf_count / variant_inf_count.sum(axis=1,keepdims=True)
+        var_inf_props_rearr = np.concatenate([variant_inf_props[:,idx_rearr[v]] for v in variants])
+        return np.nan_to_num(var_inf_props_rearr,nan=1.0)
 
     def immunity(self, variant='omicron', vacc_only=False, to_hosp=False, age=None):
         """Compute the immunity of the population against a given variant.
@@ -1587,6 +1613,16 @@ class RMWCovidModel:
         self.params_defs = non_pop_params + pop_params
         self.recently_updated_properties.append("params_defs")
 
+    def get_variant_props(self):
+        """Fetch the variant proportions and store them for fitting."""
+        logger.info(f"{str(self.tags)} Retrieving variant proportions")
+        engine = db_engine()
+        var_props = ExternalVariantProportions(engine).fetch_from_db()
+        t_offset = self.date_to_t(var_props.index.min().date())
+        var_props.set_index(pd.RangeIndex(start=t_offset,stop=len(var_props) + t_offset),inplace=True)
+        self.variant_props = var_props
+
+
     def build_param_lookups(self, apply_vaccines=True, vacc_delay=14):
         """ combine param_defs list and vaccination_data into a time indexed parameters dictionary
 
@@ -1640,6 +1676,20 @@ class RMWCovidModel:
         self.params_trange = sorted(list(set.union(*[set(param.keys()) for param_key in self.params_by_t.values() for param in param_key.values()])))
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
         # Build lookup for variant seeds
+        for region in self.attrs["region"]:
+            self.seeds[region] = {}
+            self.seed_offsets[region] = {}
+            for variant in self.attrs["variant"]:
+                if variant == "none":
+                    continue
+                seed_string = f"{variant}_seed"
+                # Extract the parameter dictionary from params_by_t. This saves us having to re-calculate the
+                # multiplier * base parameter seed.
+                seed_dict = self.params_by_t[('18-64', 'none', 'none', 'none', region)][seed_string]
+                # Make a copy of the seed dictionary.
+                # We can use this dictionary to fine-tune the variant seeds.
+                self.seeds[region][seed_string] = copy.deepcopy(seed_dict)
+                self.seed_offsets[region][seed_string] = 0
 
 
     def update_tc(self, tc, replace=True, update_lookup=True):
@@ -1663,6 +1713,13 @@ class RMWCovidModel:
             self.__tc.update(tc)
         if update_lookup:
             self.tc_t_prev_lookup = [max(t for t in self.__tc.keys() if t <= t_int) for t_int in self.trange]  # lookup for latest defined TC value
+
+    def update_seeds(self, offsets: dict):
+        """ Offset the current value of TC by
+
+        :param offsets:
+        :return:
+        """
 
     def _default_nonlinear_matrix(self):
         """A function that constructs an empty nonlinear matrix with the correct dimensions.
@@ -2070,7 +2127,7 @@ class RMWCovidModel:
                 # Look up the index of the exposed compartment.
                 to_cmpt_idx = self.cmpt_idx_lookup[to_cmpt]
                 # Find a time key less than or equal to the current T value.
-                param_dict = self.params_by_t[from_cmpt[1:]][f"{variant}_seed"]
+                param_dict = self.seeds_with_offset[region][f"{variant}_seed"]
                 # Get the key for the current time step.
                 leq_key = max([key for key in param_dict.keys() if key <= t_int])
                 # Get the seed value from the parameters.
