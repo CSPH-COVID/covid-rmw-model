@@ -78,6 +78,9 @@ class RMWCovidModel:
         self.exposed_region_lookup = {}
         self.__seeds = {}
         self.__seed_offsets = {}
+        self.__seed_scalers = {}
+        self.__voffset_max = 14
+        self.__soffset_max = 50
         self.variant_props = None
 
         # Model compartments, lookups, and ODE solution
@@ -947,14 +950,24 @@ class RMWCovidModel:
         return self.__seeds
 
     @property
-    def seeds_with_offset(self):
-        """ Get the dictionary of variant seeds for the model, incorporating offsets."""
-        return {region:{variant: SortedDict({max(0,t+self.seed_offsets[region][variant]):s for t,s in sdict.items()}) for variant,sdict in reg_dict.items()} for region,reg_dict in self.seeds.items()}
+    def voffset_max(self):
+        """ Returns the maximum offset allowed (positive or negative) when optimizing variant seeding"""
+        return self.__voffset_max
+
+    @property
+    def soffset_max(self):
+        """ Returns the maximum scaling value when optimizing variant seeding"""
+        return self.__soffset_max
 
     @property
     def seed_offsets(self):
         """ Get the dictionary containing offsets for each variant seeding plan."""
         return self.__seed_offsets
+
+    @property
+    def seed_scalers(self):
+        """ Get the dictionary containing scalar values for each variant seed"""
+        return self.__seed_scalers
 
     @property
     def params_as_dict(self):
@@ -1166,9 +1179,9 @@ class RMWCovidModel:
         variant_idcs = self.variant_compartments
         tmp_solution_y = self.solution_y[tstart:(tend+1)]
         variant_inf_count = tmp_solution_y[:,variant_idcs].reshape(tmp_solution_y.shape[0],len(all_variants),-1).sum(axis=-1)
-        variant_inf_props = variant_inf_count / variant_inf_count.sum(axis=1,keepdims=True)
+        variant_inf_props = variant_inf_count / np.maximum(variant_inf_count.sum(axis=1,keepdims=True),np.finfo(np.float32).eps)
         var_inf_props_rearr = np.concatenate([variant_inf_props[:,idx_rearr[v]] for v in variants])
-        return np.nan_to_num(var_inf_props_rearr,nan=1.0)
+        return var_inf_props_rearr
 
     def immunity(self, variant='omicron', vacc_only=False, to_hosp=False, age=None):
         """Compute the immunity of the population against a given variant.
@@ -1675,21 +1688,25 @@ class RMWCovidModel:
         # Testing changing the vaccination to every week
         self.params_trange = sorted(list(set.union(*[set(param.keys()) for param_key in self.params_by_t.values() for param in param_key.values()])))
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
-        # Build lookup for variant seeds
+        # Build lookup for variant seeds, offset values and scaling values
+        self.__seed_offsets = {f"{variant}_seed":0.0 for variant in self.attrs["variant"] if variant != "none"}
+        self.__seed_scalers = {f"{variant}_seed":1.0 for variant in self.attrs["variant"] if variant != "none"}
+
         for region in self.attrs["region"]:
-            self.seeds[region] = {}
-            self.seed_offsets[region] = {}
+            self.__seeds[region] = {}
             for variant in self.attrs["variant"]:
                 if variant == "none":
                     continue
                 seed_string = f"{variant}_seed"
                 # Extract the parameter dictionary from params_by_t. This saves us having to re-calculate the
                 # multiplier * base parameter seed.
-                seed_dict = self.params_by_t[('18-64', 'none', 'none', 'none', region)][seed_string]
+                seed_dict = self.params_by_t["all"][seed_string]
                 # Make a copy of the seed dictionary.
                 # We can use this dictionary to fine-tune the variant seeds.
-                self.seeds[region][seed_string] = copy.deepcopy(seed_dict)
-                self.seed_offsets[region][seed_string] = 0
+                seed_arr = np.zeros(self.tend+1)
+                for t,val in seed_dict.items():
+                    seed_arr[t:] = val
+                self.__seeds[region][seed_string] = seed_arr
 
 
     def update_tc(self, tc, replace=True, update_lookup=True):
@@ -1714,12 +1731,16 @@ class RMWCovidModel:
         if update_lookup:
             self.tc_t_prev_lookup = [max(t for t in self.__tc.keys() if t <= t_int) for t_int in self.trange]  # lookup for latest defined TC value
 
-    def update_seeds(self, offsets: dict):
-        """ Offset the current value of TC by
+    def update_seed_offsets(self, offsets: dict):
+        """ Offset the current value of the seed by T days
 
         :param offsets:
         :return:
         """
+        self.seed_offsets.update(offsets)
+
+    def update_seed_scalers(self, scalers: dict):
+        self.seed_scalers.update(scalers)
 
     def _default_nonlinear_matrix(self):
         """A function that constructs an empty nonlinear matrix with the correct dimensions.
@@ -2076,6 +2097,22 @@ class RMWCovidModel:
                 self.nonlinear_matrices[t][k] = v.tocsr()
         self.region_picker_matrix = self.region_picker_matrix.tocsr()
 
+    def soft_shift(self, arr, shift):
+        l = math.floor(shift)
+        r = math.ceil(shift)
+        frac_l = r - shift
+
+        pos_shift = (shift > 0)
+        if pos_shift:
+            lpad = np.pad(arr, (l, 0))[:(-l) if l != 0 else None]
+            rpad = np.pad(arr, (r, 0))[:-r]
+        else:
+            absl = abs(l)
+            absr = abs(r)
+            lpad = np.pad(arr, (0, absl))[absl:]
+            rpad = np.pad(arr, (0, absr))[absr:]
+
+        return lpad * (frac_l) + rpad * (1-frac_l)
 
     def ode(self, t: float, y: list):
         """Compute the derivative WRT time of the model at a time t and state vector y. Used to solve the system of ODE's
@@ -2088,16 +2125,17 @@ class RMWCovidModel:
 
         """
         dy = [0] * self.n_compartments
-        t_int = self.t_prev_lookup[math.floor(t)]
-        t_tc = self.tc_t_prev_lookup[math.floor(t)]
+        t_int = math.floor(t)
+        t_last = self.t_prev_lookup[t_int]
+        t_tc = self.tc_t_prev_lookup[t_int]
         nlm = [(1 - self.__tc[t_tc][region]) for region in self.regions]
         nlm_vec = self.region_picker_matrix.dot(nlm)
 
         # apply linear terms
-        dy += (self.linear_matrix[t_int]).dot(y)
+        dy += (self.linear_matrix[t_last]).dot(y)
 
         # apply non-linear terms
-        for scale_by_cmpt_idxs, matrix in self.nonlinear_matrices[t_int].items():
+        for scale_by_cmpt_idxs, matrix in self.nonlinear_matrices[t_last].items():
             dy += nlm_vec * sum(itemgetter(*scale_by_cmpt_idxs)(y)) * matrix.dot(y)
 
         # TODO: Constant terms are ONLY used for the seeding, so we just need to replace this constant vector.
@@ -2110,10 +2148,13 @@ class RMWCovidModel:
         # prior infection. The old method of pulling from the (S, 18-64, none, none, none) compartment starts to fail
         # since this compartment approaches zero over time.
         for region in self.regions:
+            idxs = self.susceptible_cmpt_idcs[region]
             # Find the index of the largest of the susceptible compartments at the previous timestep.
-            from_cmpt_index = y[self.susceptible_cmpt_idcs[region]].argmax()
+            from_cmpt_index = idxs[y[idxs].argmax()]
             # Find the name of the compartment
             from_cmpt = self.compartments[from_cmpt_index]
+            # Seeds
+            seeds = self.seeds[region]
             # For each variant
             for variant in self.attrs["variant"]:
                 if variant == "none":
@@ -2127,11 +2168,13 @@ class RMWCovidModel:
                 # Look up the index of the exposed compartment.
                 to_cmpt_idx = self.cmpt_idx_lookup[to_cmpt]
                 # Find a time key less than or equal to the current T value.
-                param_dict = self.seeds_with_offset[region][f"{variant}_seed"]
-                # Get the key for the current time step.
-                leq_key = max([key for key in param_dict.keys() if key <= t_int])
+                seed_str = f"{variant}_seed"
+                seed_arr = seeds[seed_str]
+                offset = self.seed_offsets[seed_str]
+                scaler = self.seed_scalers[seed_str]
                 # Get the seed value from the parameters.
-                seed_val = param_dict[leq_key]
+                seed_val = self.soft_shift(seed_arr,offset)[t_int] * scaler
+                #seed_val = seed_arr[int(np.clip(t_int+offset, 0, self.tend))] * scaler
                 if y[from_cmpt_index] - seed_val < 0:
                     raise ValueError(f"Seeding would cause compartment to become negative!\n{from_cmpt} Value: {y[from_cmpt_index]}\n{variant} Seed Value: {seed_val}")
                 # Subtract the seed value from the susceptible compartment.
