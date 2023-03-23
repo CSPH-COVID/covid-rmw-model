@@ -84,7 +84,7 @@ def wrapper_run(args: dict):
         get_filepath_prefix(outdir, tags=base_model.tags) + 'seir_variant_immun_total_all_at_once_projection.csv')
     base_model.solution_sum_df().unstack().to_csv(
         get_filepath_prefix(outdir, tags=base_model.tags) + 'full_projection.csv')
-    base_model.solution_sum_df(['seir', 'variant']).to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + 'seir_by_variant.csv')
+    base_model.solution_sum_df(['seir', 'variant']).unstack().to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + 'seir_by_variant.csv')
     xmin = datetime.datetime.strptime(args["start_date"], "%Y-%m-%d").date()
     xmax = datetime.datetime.strptime(args["end_date"], "%Y-%m-%d").date()
     fig = plt.figure(figsize=(10, 10), dpi=300)
