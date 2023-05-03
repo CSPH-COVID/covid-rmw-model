@@ -6,6 +6,7 @@ from multiprocessing import Pool
 import logging
 import json
 from time import perf_counter
+from itertools import pairwise
 import datetime as dt
 """ Third Party Imports """
 from multiprocessing_logging import install_mp_handler
@@ -14,6 +15,7 @@ import numpy as np
 from scipy import optimize as spo
 from matplotlib import pyplot as plt
 from matplotlib.cm import tab20
+from matplotlib.patches import Rectangle
 import matplotlib.ticker as mtick
 """ Local Imports """
 from covid_model import RMWCovidModel
@@ -199,8 +201,11 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
     trange = range(tstart, tend+1)
     # hrf_finder
     # To take out hrf: change 'estimated_actual' to 'observed':
-    ydata = np.log(1+model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F'))
-    #ydata = ydata / max_scale
+    #ydata = np.log(1+model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F'))
+
+    ydata = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F')
+    max_scale = ydata.max()
+    ydata = ydata / max_scale
     ydata_variants = model.variant_props.loc[trange]
     #relevant_variants = [c for c in ydata_variants if (ydata_variants[c]!=0).any()]
     n_relevant_variants = len(relevant_variants)
@@ -252,11 +257,13 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
         model.solve_seir(y0=y0, tstart=tstart, tend=tend)
 
         ypred = np.concatenate([
-            np.log(1+model.solution_sum_Ih(tstart, tend, regions=regions)),
+            #np.log(1+model.solution_sum_Ih(tstart, tend, regions=regions)),
+            model.solution_sum_Ih(tstart,tend,regions=regions)/max_scale,
             model.solution_var_props(tstart,tend,variants=relevant_variants)
         ])
 
         return ypred
+
 
     fitted_p, fitted_p_cov = spo.curve_fit(
         f=tc_func,
@@ -276,9 +283,23 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
         verbose=2
     )
 
+    logger.info(f"{str(model.tags)}: Optimization finished.")
+
+    # res = spo.direct(
+    #     func=loss,
+    #     # x0=[tc[t][region] for t in tc_ts for region in model.regions] +  # TC guesses
+    #     #    [model.seed_offsets[f"{variant}_seed"]/model.voffset_max for variant in relevant_variants] +  # Offset guesses
+    #     #    [model.seed_scalers[f"{variant}_seed"]/model.soffset_max for variant in relevant_variants], # Scaler guesses
+    #     bounds=([(tc_min,tc_max)] * len(tc_ts) * len(regions)) +  # TC min bound
+    #            ([(-1.0,1.0)] * n_relevant_variants) +  # Offset min bound
+    #            ([(0.0,1.0)] * n_relevant_variants),# Scaler min bound
+    # )
+    # if not res.success:
+    #     raise RuntimeError("Optimization failed.")
+
     return fitted_p, fitted_p_cov
 
-def forward_sim_plot(model, outdir):
+def forward_sim_plot(model, outdir, highlight_range=None):
     """Solve the model's ODEs and plot transmission control, and save hosp & TC data to disk
 
     Args:
@@ -292,6 +313,9 @@ def forward_sim_plot(model, outdir):
         hosps_df.loc[region].plot(ax=axs[0, i])
         axs[0,i].title.set_text(f'Hospitalizations: {region}')
         plot_transmission_control(model, [region], ax=axs[1,i])
+        if highlight_range is not None:
+            lb,ub = highlight_range
+            axs[0,i].axvspan(xmin=lb,xmax=ub,color="gray",alpha=0.5)
         axs[1, i].title.set_text(f'TC: {region}')
         plot_variant_proportions(model,ax=axs[2,i])
         #axs[2,i].legend()
@@ -381,7 +405,7 @@ def do_single_fit(tc_0=0.75,
     if pre_solve_model:
         logger.info(f'{str(model.tags)} Solving Model ODE')
         t0 = perf_counter()
-        model.solve_seir()
+        model.seir_graph_trace()
         logger.info(f'{str(model.tags)} Model solved in {perf_counter() - t0} seconds.')
 
     # replace the TC and tslices within the fit window
@@ -464,55 +488,61 @@ def do_single_fit(tc_0=0.75,
     return model
 
 
-def do_variant_optimization(model: RMWCovidModel, outdir:str,  tc_min:float=0.0, tc_max:float=0.99, **kwargs):
+def do_variant_optimization(model: RMWCovidModel, outdir:str,  tc_min:float=0.0, tc_max:float=0.99, write_specs=True, **kwargs):
     model.solve_seir()
     model.tags["vopt"] = "pre_opt"
     logger.info(f"{str(model.tags)} Generating pre-optimization plot for comparison...")
     forward_sim_plot(model, outdir)
-    for variant in model.attrs["variant"]:
-        if variant in {"none","wildtype"}:
+    for v1,v2 in pairwise(model.attrs["variant"]):
+        if v1 == "none":
             continue
         logger.info(f"{str(model.tags)} Starting optimization process...")
-        model.tags["vopt"] = variant
+        model.tags["vopt"] = f"{v1}_{v2}"
         start_t = perf_counter()
         # A variant's optimization region start when seeding begins and ends when the variant's proportion of infections
         # is close to 0
 
         vwindow_start = int(np.clip(
-            model.seeds[model.regions[0]][f"{variant}_seed"].argmax() +
-            model.seed_offsets[f"{variant}_seed"],
+            model.seeds[model.regions[0]][f"{v1}_seed"].argmax() - model.voffset_max - 1, # Give us enough space so that we can optimize the seed backwards up to the limit.
             model.tstart,
             model.tend
         ))
         # The window ends when the variant proportion falls to 0.
-        vwindow_end = int(len(model.variant_props) - np.argmax(~np.isclose(model.variant_props[variant].values[::-1],0.0)))
+        vwindow_end = int(len(model.variant_props) - np.argmax(~np.isclose(model.variant_props[v2].values[::-1],0.0)))
         # Clip the window end so that we do not surpass the end of hospitalizations
         hosps_end_t = model.date_to_t(model.hosps.index.get_level_values("date").max())
         vwindow_end = min(vwindow_end,model.tend,hosps_end_t)
         vwindow_ydict = model.y_dict(vwindow_start) if vwindow_start != 0 else model.y0_dict
 
-        logger.info(f"{str(model.tags)}: Variant '{variant}' appears between "
+        logger.info(f"{str(model.tags)}: Variant pair ({v1}, {v2}) appears between "
                     f"{model.t_to_date(vwindow_start)} and {model.t_to_date(vwindow_end)}")
 
         fitted_p, fitted_p_cov = __single_batch_fit_variant_opt(model,
                                                              tc_min=tc_min,
                                                              tc_max=tc_max,
-                                                             relevant_variants=[variant],
+                                                             relevant_variants=[v1,v2],
                                                              yd_start=vwindow_ydict,
                                                              tstart=vwindow_start,
                                                              tend=vwindow_end)
-        fitted_tc = fitted_p[:-2]
-        fitted_offset = fitted_p[-2]
-        current_offset = model.seed_offsets[f"{variant}_seed"]
-        fitted_scaler = fitted_p[-1]
-        current_scaler = model.seed_scalers[f"{variant}_seed"]
+        fitted_tc = fitted_p[:-4]
+        #fitted_offset = fitted_p[-4:-2]
+        #current_offset = model.seed_offsets[f"{v1,v2}_seed"]
+        #fitted_scaler = fitted_p[-2:]
+        #current_scaler = model.seed_scalers[f"{v1,v2}_seed"]
         elapsed_t = perf_counter() - start_t
-        logger.info(f"{str(model.tags)}: Fitted TC: {fitted_tc}")
-        logger.info(f"{str(model.tags)}: Fitted Offset: {fitted_offset * model.voffset_max}, Current Offset: {current_offset}")
-        logger.info(f"{str(model.tags)}: Fitted Seed Scale: {fitted_scaler * model.soffset_max}, Current Seed Scale: {current_scaler}")
-        logger.info(f"{str(model.tags)}: Optimized variant '{variant}' in {elapsed_t:0.2f} seconds.")
+        for v in (v1,v2):
+            offset = model.seed_offsets[f"{v}_seed"]
+            scale = model.seed_scalers[f"{v}_seed"]
+            logger.info(f"{str(model.tags)}: '{v}'Fitted Offset: {offset}")
+            logger.info(f"{str(model.tags)}: '{v}'Fitted Seed Scale: {scale}")
+
+        logger.info(f"{str(model.tags)}: Optimized variant pair '{v1,v2}' in {elapsed_t:0.2f} seconds.")
+
         model.solve_seir()
-        forward_sim_plot(model, outdir)
+        forward_sim_plot(model, outdir,highlight_range=(vwindow_start,vwindow_end))
+
+        if write_specs:
+            model.write_specs_to_db()
     return model
 
 def do_single_fit_wrapper_parallel(args):
@@ -632,7 +662,7 @@ def do_create_report(model, outdir, immun_variants=('ba2121',), from_date=None, 
 
     if solve_model:
         logger.info('Solving model')
-        model.solve_seir()
+        model.seir_graph_trace()
 
     subplots_args = {'figsize': (10, 8), 'dpi': 300}
 

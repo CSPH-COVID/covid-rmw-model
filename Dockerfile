@@ -8,14 +8,16 @@
 FROM python:3.10-bullseye
 # Set a working directory.
 WORKDIR /covid_rmw_model
+# Copy requirements.txt
+COPY requirements.txt ./ \
+# Install required packages
+RUN pip install --no-cache-dir -r requirements.txt
 # Copy the files over to the image.
 # Note: We use a .dockerignore file to only copy relevant files from the covid_model directory.
 COPY covid_model ./covid_model/
 # Make a empty output directory. We need this so we can mount the GCS bucket here.
 RUN mkdir covid_model/output
 # Copy the wrapper and requirements file to the image.
-COPY scripts/docker_wrapper.py scripts/docker_wrapper_test.py docker_test/sample_config.json requirements.txt ./
-# Install required packages
-RUN pip install --no-cache-dir -r requirements.txt
+COPY scripts/docker_wrapper.py scripts/docker_wrapper_test.py docker_test/sample_config.json ./
 # Set the entrypoint for the image.
 ENTRYPOINT ["python3","docker_wrapper.py"]

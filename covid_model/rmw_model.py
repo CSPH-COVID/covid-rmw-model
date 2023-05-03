@@ -8,6 +8,9 @@ import itertools
 from collections import OrderedDict, defaultdict
 import logging
 import pickle
+
+import networkx as nx
+
 """ Third Party Imports """
 import numpy as np
 #np.seterr(invalid="raise")
@@ -54,8 +57,10 @@ class RMWCovidModel:
                                     # agecat_finder
                                     'age': ['0-17', '18-64', '65+'],
                                     'vacc': ['none', 'shot1', 'shot2', 'booster1', 'booster23'],
-                                    'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba2121', 'ba45', 'bq', 'xbb'],
-                                    'immun': ['none', 'weak', 'strong'],
+                                    #'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba2121', 'ba45', 'bq', 'xbb'],
+                                    'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba45', 'bq', 'xbb'],
+                                    #'immun': ['none', 'weak', 'strong'],
+                                    'immun': ["low", "medium", "high"],
                                     # region_finder
                                     'region': ['coe','con','cow','ide','idn','ids','idw','mte','mtn','mtw','nme','nmn','nms','nmw','ute','utn','uts','utw','wye','wyn','wyw']})
         # labels used when logging and writing to db.
@@ -92,6 +97,7 @@ class RMWCovidModel:
         self.param_compartments = None
         self.params_trange = None
         self.solution_y = None
+        self.graph = None
 
         # data related params
         self.__params_defs = None # default params
@@ -903,8 +909,8 @@ class RMWCovidModel:
         """
         if self.__y0_dict is None:
             # get the population of each age group in each region.
-            group_pops = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'none'}).loc[0].reset_index().drop(columns=['vacc', 'variant', 'immun'])
-            y0d = {('S', row['age'], 'none', 'none', 'none', row['region']): row['region_age_pop'] for i, row in group_pops.iterrows()}
+            group_pops = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'low'}).loc[0].reset_index().drop(columns=['vacc', 'variant', 'immun'])
+            y0d = {('S', row['age'], 'none', 'none', 'low', row['region']): row['region_age_pop'] for i, row in group_pops.iterrows()}
             self.__y0_dict = y0d
             return y0d
         else:
@@ -1465,7 +1471,7 @@ class RMWCovidModel:
         vacc_rates = vacc_rates.set_index('t', append=True)
         # get the population of each age group (in each region) at each point in time. Should work with changing populations, but right now pop is static
         # also, attrs doesn't matter since the `region_age_pop` is just specific to an age group and region
-        populations = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'none'}).reset_index([an for an in self.param_attr_names if an not in ['region', 'age']])[['region_age_pop']]
+        populations = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'low'}).reset_index([an for an in self.param_attr_names if an not in ['region', 'age']])[['region_age_pop']]
         vacc_rates_ts = vacc_rates.index.get_level_values('t').unique()
         populations = populations.iloc[[t in vacc_rates_ts for t in populations.index.get_level_values('t')]].reorder_levels(['region', 'age', 't']).sort_index()
         populations.rename(columns={'region_age_pop': 'population'}, inplace=True)
@@ -1631,6 +1637,21 @@ class RMWCovidModel:
         logger.info(f"{str(self.tags)} Retrieving variant proportions")
         engine = db_engine()
         var_props = ExternalVariantProportions(engine).fetch_from_db()
+        avail_prop_cols = set(var_props.columns)
+        avail_model_cols = set(self.attrs["variant"])
+
+        model_missing_cols = avail_prop_cols - avail_model_cols
+        if len(model_missing_cols) != 0:
+            logger.info(f"{str(self.tags)} Model is missing variant(s): {model_missing_cols} "
+                        f"which exist in variant proportion data. Proportions will be rescaled to match.")
+            var_props.drop(columns=model_missing_cols,inplace=True)
+            var_props = var_props.divide(var_props.sum(axis=1),axis="index")
+        data_missing_cols = avail_model_cols - avail_prop_cols
+        if len(data_missing_cols) != 0:
+            self.log_and_raise(f"Model contains variant(s): {data_missing_cols} which do not exist in "
+                               "variant proportion data. Please modify or update variant proportion data to contain "
+                               "these variants",
+                               ValueError)
         t_offset = self.date_to_t(var_props.index.min().date())
         var_props.set_index(pd.RangeIndex(start=t_offset,stop=len(var_props) + t_offset),inplace=True)
         self.variant_props = var_props
@@ -1847,7 +1868,7 @@ class RMWCovidModel:
         else:
             return {t: coef for t in self.params_trange}
 
-    def add_flow_from_cmpt_to_cmpt(self, from_cmpt, to_cmpt, from_coef=None, to_coef=None, from_to_coef=None, scale_by_cmpts=None, scale_by_cmpts_coef=None, constant=None):
+    def add_flow_from_cmpt_to_cmpt(self, from_cmpt, to_cmpt, from_coef=None, to_coef=None, from_to_coef=None, scale_by_cmpts=None, scale_by_cmpts_coef=None, constant=None, graph=None):
         """add a flow term, and add new flow to ODE matrices
 
         Depending on the passed arguments, a term will be added to either the constant vector, linear matrix, or one or
@@ -1903,6 +1924,17 @@ class RMWCovidModel:
             scale_by_cmpts_coef_by_t=coef_by_t_dl if scale_by_cmpts is not None else None,
             constant_by_t=self.calc_coef_by_t(constant, to_cmpt) if constant is not None else None)
 
+        if graph is not None:
+            graph.add_edge(from_cmpt,
+                           to_cmpt,
+                           term=term,
+                           to_coef=to_coef,
+                           from_coef=from_coef,
+                           from_to_coef=from_to_coef,
+                           scale_by_cmpts=scale_by_cmpts,
+                           scale_by_cmpts_coef=scale_by_cmpts_coef,
+                           constant_coef=constant)
+
         # don't even add the term if all its coefficients are zero
         if not (isinstance(term, ConstantODEFlowTerm)) and all([c == 0 for c in term.coef_by_t.values()]):
             pass
@@ -1918,7 +1950,7 @@ class RMWCovidModel:
                 #term.add_to_constant_vector(self.constant_vector[t], t)
 
 
-    def add_flows_from_attrs_to_attrs(self, from_attrs, to_attrs, from_coef=None, to_coef=None, from_to_coef=None, scale_by_attrs=None, scale_by_coef=None, constant=None):
+    def add_flows_from_attrs_to_attrs(self, from_attrs, to_attrs, from_coef=None, to_coef=None, from_to_coef=None, scale_by_attrs=None, scale_by_coef=None, constant=None, graph=None):
         """add  flows from one set of compartments to another set of compartments
 
         The "from" compartments are all compartments matching the attributes specified in from_attrs
@@ -1963,36 +1995,49 @@ class RMWCovidModel:
             to_cmpts = self.update_cmpt_tuple_with_attrs(from_cmpt, to_attrs)
             for to_cmpt in to_cmpts:
                 self.add_flow_from_cmpt_to_cmpt(from_cmpt, to_cmpt, from_coef=from_coef, to_coef=to_coef, from_to_coef=from_to_coef, scale_by_cmpts=scale_by_cmpts,
-                                                scale_by_cmpts_coef=scale_by_coef, constant=constant)
+                                                scale_by_cmpts_coef=scale_by_coef, constant=constant, graph=graph)
 
-    def build_ode_flows(self):
+
+    def build_ode_flows(self,graph_trace=True):
         """Create all the flows that should be in the model, to represent the different dynamics we are modeling
 
         """
         logger.debug(f"{str(self.tags)} Building ode flows")
         self.flows_string = self.flows_string = '(' + ','.join(self.attr_names) + ')'
         self.reset_ode()
+
+        # Trace the flows with the graph if 'graph_trace' is True
+        graph = None
+        if graph_trace:
+            logger.info(f"{str(self.tags)} Graph trace enabled.")
+            graph = nx.MultiDiGraph()
+            graph.add_nodes_from([(cmpt, {k:v for k,v in zip(self.attrs,cmpt)}) for cmpt in self.compartments])
         # vaccination
         logger.debug(f"{str(self.tags)} Building vaccination flows")
         for seir in ['S', 'E', 'A']:
-            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'weak'},
-                                               from_coef=f'shot1_per_available * (1 - shot1_fail_rate)')
-            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'none'},
-                                               from_coef=f'shot1_per_available * shot1_fail_rate')
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'medium'},
+                                               from_coef=f'shot1_per_available * shot1_ve',
+                                               graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'low'},
+                                               from_coef=f'shot1_per_available * (1-shot1_ve)',
+                                               graph=graph)
             for (from_shot, to_shot) in [('shot1', 'shot2'), ('shot2', 'booster1'), ('booster1', 'booster23')]:
                 for immun in self.attrs['immun']:
-                    if immun == 'none':
+                    if immun == 'low':
                         # if immun is none, that means that the first vacc shot failed, which means that future shots may fail as well
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'strong'},
-                                                           from_coef=f'{to_shot}_per_available * (1 - {to_shot}_fail_rate / {to_shot}_fail_rate)')
+                                                           {'vacc': f'{to_shot}', 'immun': f'high'},
+                                                           from_coef=f'{to_shot}_per_available * {to_shot}_ve',
+                                                           graph=graph)
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'none'},
-                                                           from_coef=f'{to_shot}_per_available * ({to_shot}_fail_rate / {to_shot}_fail_rate)')
+                                                           {'vacc': f'{to_shot}', 'immun': f'low'},
+                                                           from_coef=f'{to_shot}_per_available * (1-{to_shot}_ve)',
+                                                           graph=graph)
                     else:
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'strong'},
-                                                           from_coef=f'{to_shot}_per_available')
+                                                           {'vacc': f'{to_shot}', 'immun': f'high'},
+                                                           from_coef=f'{to_shot}_per_available',
+                                                           graph=graph)
 
 
         # seed variants (only seed the ones in our attrs)
@@ -2015,10 +2060,10 @@ class RMWCovidModel:
             # No mobility between regions (or a single region)
             if self.mobility_mode is None or self.mobility_mode == "none":
                 for region in self.attrs['region']:
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb * betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region})
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region})
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="lamb * betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region})
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region})
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb * betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="lamb * betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph)
             # Transmission parameters attached to the susceptible population
             elif self.mobility_mode == "population_attached":
                 for infecting_region in self.attrs['region']:
@@ -2039,36 +2084,57 @@ class RMWCovidModel:
 
         # disease progression
         logger.debug(f"{str(self.tags)} Building disease progression flows")
-        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'I'}, to_coef='1 / alpha * pS')
-        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'A'}, to_coef='1 / alpha * (1 - pS)')
+        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'I'}, to_coef='1 / alpha * pS',graph=graph)
+        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'A'}, to_coef='1 / alpha * (1 - pS)',graph=graph)
         # assume no one is receiving both pax and mab
         # removing mab_hosp_adj
-        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * (1 - mab_prev - pax_prev)')
-        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * mab_prev * mab_hosp_adj')
-        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * pax_prev * pax_hosp_adj')
+        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * (1 - mab_prev - pax_prev)',graph=graph)
+        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * mab_prev * mab_hosp_adj',graph=graph)
+        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * pax_prev * pax_hosp_adj',graph=graph)
 
         # disease termination
         logger.debug(f"{str(self.tags)} Building termination flows")
         for variant in self.attrs['variant']:
             if variant == 'none':
                 continue
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='gamm * (1 - hosp - dnh) * (1 - priorinf_fail_rate)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * (1 - hosp - dnh) * priorinf_fail_rate')
-            self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='gamm * (1 - priorinf_fail_rate)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * priorinf_fail_rate')
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='gamm * (1 - hosp - dnh) * (1 - priorinf_fail_rate)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * (1 - hosp - dnh) * priorinf_fail_rate',graph=graph)
 
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate) * (1-mab_prev)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * (1-mab_prev)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * (1 - priorinf_fail_rate) * mab_prev')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * priorinf_fail_rate * mab_prev')
+            for prior_immunity in self.attrs["immun"]:
+                # Three cases:
+                # 1. Prior immunity low -> resulting immunity is medium
+                # 2. Prior immunity medium -> resulting immunity is high
+                # 3. Prior immunity high -> resulting immunity is high
 
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'D'}, to_coef='gamm * dnh * (1 - severe_immunity)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'D'}, to_coef='1 / hlos * dh')
+                resulting_immunity = "medium" if prior_immunity == "low" else "high"
+                self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant, 'immun': prior_immunity}, {'seir': 'S', 'immun': resulting_immunity}, to_coef='gamm * (1 - priorinf_fail_rate)',graph=graph)
+                self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant, 'immun': prior_immunity}, {'seir': 'S'}, to_coef='gamm * priorinf_fail_rate',graph=graph)
+
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate) * (1-mab_prev)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * (1-mab_prev)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * (1 - priorinf_fail_rate) * mab_prev',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * priorinf_fail_rate * mab_prev',graph=graph)
+
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'D'}, to_coef='gamm * dnh * (1 - severe_immunity)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'D'}, to_coef='1 / hlos * dh',graph=graph)
 
         # immunity decay
         logger.debug(f"{str(self.tags)} Building immunity decay flows")
         for seir in [seir for seir in self.attrs['seir'] if seir != 'D']:
-            self.add_flows_from_attrs_to_attrs({'seir': seir, 'immun': 'strong'}, {'immun': 'weak'}, to_coef='1 / imm_decay_days')
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'immun': 'high'}, {'immun': 'medium'}, to_coef='1 / imm_decay_high_medium',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'immun': 'medium'}, {'immun': 'low'}, to_coef='1 / imm_decay_medium_low',graph=graph)
+
+
+        if graph_trace:
+            self.graph = graph
+            tags_to_str = "_".join([f"{k}_{v}" for k,v in self.tags.items()])
+            graph_fname = f"{tags_to_str}_traced_graph"
+            logger.info(f"{str(self.tags)} Traced graph has {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
+            logger.info(f"{str(self.tags)} Writing traced graph to '{graph_fname}.pkl'.")
+            with open(graph_fname + ".pkl","wb") as f:
+                pickle.dump(graph,f)
+            logger.info(f"{str(self.tags)} Writing traced graph to '{graph_fname}.gexf'.")
+            #nx.write_gexf(graph,graph_fname + ".gexf")
 
     def build_region_picker_matrix(self):
         """A matrix which indicates the region associated with each compartment.
@@ -2381,6 +2447,18 @@ class RMWCovidModel:
         """
         return {tuple(li[:-1]): float(li[-1]) for li in y0_list} if y0_list is not None else None
 
+    @classmethod
+    def serialize_seeds(cls, seed_dict:dict):
+        """ Serialize a dict-of-dict-of-ndarray representing the seed arrays for the model.
+
+        Args:
+            seed_dict: dict of dict of ndarray.
+
+        Returns: Same dictionary structure, but with ndarray converted to list so that the object can be serialized
+                 with JSON dump.
+        """
+        return {reg:{var:list(var_seeds) for var,var_seeds in reg_seeds.items()} for reg,reg_seeds in seed_dict.items()}
+
     def to_json_string(self):
         """serializes SOME of this model's properties to a json format which can be written to database.
 
@@ -2400,7 +2478,9 @@ class RMWCovidModel:
                 '_RMWCovidModel__region_defs', '_RMWCovidModel__regions', '_RMWCovidModel__vacc_proj_params',
                 '_RMWCovidModel__mobility_mode', 'actual_mobility', 'proj_mobility', 'proj_mobility',
                 '_RMWCovidModel__mobility_proj_params', 'actual_vacc_df', 'proj_vacc_df', 'hosps', #'_RMWCovidModel__hosp_reporting_frac',
-                '_RMWCovidModel__y0_dict', 'max_step_size', 'ode_method']
+                '_RMWCovidModel__y0_dict', '_RMWCovidModel__seeds', '_RMWCovidModel__seed_offsets',
+                '_RMWCovidModel__seed_scalers', '_RMWCovidModel__voffset_max', '_RMWCovidModel__soffset_max',
+                'max_step_size', 'ode_method']
         # add in proj_mobility
         serial_dict = OrderedDict()
         for key in keys:
@@ -2419,6 +2499,8 @@ class RMWCovidModel:
                 serial_dict[key] = self.serialize_y0_dict(val)
             elif key == 'max_step_size':
                 serial_dict[key] = val if not np.isinf(val) else 'inf'
+            elif key == "_RMWCovidModel__seeds":
+                serial_dict[key] = self.serialize_seeds(val)
             else:
                 serial_dict[key] = val
         return json.dumps(serial_dict)

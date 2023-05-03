@@ -86,7 +86,7 @@ def plot_variant_proportions(model, ax, show_seeds=None):
     # Plot variant proportions
     use_variants = sorted(list(set(model.attrs["variant"]) - {"none"}))
     color_idx = {v: (2 * iv) for iv, v in enumerate(use_variants)}
-    actual_var = model.variant_props.drop(columns="none")
+    actual_var = model.variant_props.drop(columns=["none"])
     for vname, vprop in zip(actual_var.columns, actual_var.T.values):
         ax.plot(np.array([model.t_to_date(t) for t in actual_var.index]),
                 vprop,

@@ -115,7 +115,7 @@ class ExternalVariantProportions(ExternalData):
 
     """
     def fetch_from_db(self,) -> pd.DataFrame:
-        with open("/Users/andrewhill/Documents/variant_proportion/20230227_175507_xbb_escape_weak_0.8_xbb_escape_strong_0.24_fit_batch_0_run_type_fit_model_solutionydf.pkl","rb") as f:
+        with open("covid_model/input/test_variant_props.pkl","rb") as f:
             raw_df = pickle.load(f)
             raw_df.set_index(pd.date_range(start="2020-01-24",periods=len(raw_df),freq="D"),inplace=True)
         inf_df = raw_df["I"].groupby("variant",axis=1).sum()

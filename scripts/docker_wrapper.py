@@ -52,7 +52,7 @@ def wrapper_run(args: dict):
     # For now we expect that all parameters for all regions exist in the same file.
     # TODO: Change this to support separate parameter files per-region.
     base_model_args = {
-        'params_defs': 'covid_model/input/rmw_test_tmp_params.json',
+        'params_defs': 'covid_model/input/rmw_temp_params_changes_test.json',
         #'params_defs': 'covid_model/input/rmw_temp_params.json',
         # 'region_defs': 'covid_model/input/rmw_region_definitions.json',
         'vacc_proj_params': 'covid_model/input/rmw_vacc_proj_params.json',
@@ -63,11 +63,11 @@ def wrapper_run(args: dict):
         #'fit_start_date': "2022-02-02",
         #'fit_end_date': args["scenarios_fit_end_date"],
         'regions': [instance_region],
-        'tags': {"region": instance_region},
+        'tags': {"region": instance_region, "params": "new"},
         'outdir': outdir,
         'pickle_matrices': False,
         #'pre_solve_model': True,
-        'tc_window_size': 30,
+        #'tc_window_size': 30,
         #'tc_window_batch_size': 3,
         #'tc_batch_increment': 2
         #'base_spec_id': 5115
@@ -128,24 +128,38 @@ def wrapper_run(args: dict):
     spec_ids = [START_SPEC_ID + (BATCH_TASK_INDEX * n_fits) + i for i in range(n_fits)]
     base_model_args["spec_id"] = spec_ids[0]
     for scen, spec_id in zip(scenario_model_args, spec_ids[1:]):
-        #scen["base_spec_id"] = spec_ids[0]
-        scen["base_spec_id"] = 5111
+        scen["base_spec_id"] = spec_ids[0]
+        #scen["base_spec_id"] = 5111
+        #scen["base_spec_id"] = 5226
         scen["spec_id"] = spec_id
     # MODEL FITTING
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
-    #base_model = do_single_fit(**base_model_args)
-    base_model = RMWCovidModel(base_spec_id=5151)
-    base_model.prep()
+    base_model = do_single_fit(**base_model_args)
+    # COE model for testing variant fitting
+    #base_model = RMWCovidModel(base_spec_id=5223)
+    # NMW model for variant fitting
+    #OLD ONE -> base_model = RMWCovidModel(base_spec_id=5216)
+    #base_model = RMWCovidModel(base_spec_id=5221)
+    # IDE model for variant fitting
+    # base_model = RMWCovidModel(base_spec_id=5217)
+    # CON Model testing new parameters
+    #base_model = RMWCovidModel(base_spec_id=5226)
+    #base_model.prep(pickle_matrices=False)
+    # CON Model with new parameters
+    #base_model = RMWCovidModel(base_spec_id=5229)
+    #base_model.prep(pickle_matrices=False)
 
     base_model.solve_seir()
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
         pickle.dump(base_model.solution_ydf, f)
     print("Finished base model fit.")
     # Variant Optimization
-    variant_optimized_model = do_variant_optimization(model=base_model, **base_model_args)
-    #base_model.solve_seir()
-    exit(0)
+    base_model = do_variant_optimization(model=base_model, **base_model_args)
+    base_model.solve_seir()
+    with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
+        pickle.dump(base_model.solution_ydf, f)
+    #exit(0)
     # MODEL OUTPUTS
     logging.info('Projecting')
     do_create_report(base_model, outdir=outdir, prep_model=False, solve_model=False,
@@ -169,6 +183,7 @@ def wrapper_run(args: dict):
     plt.close()
     hosps_df.to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.csv')
     json.dump(base_model.tc, open(get_filepath_prefix(outdir, tags=base_model.tags) + 'model_forecast_tc.json', 'w'))
+    exit(0)
     # SCENARIO FITTING
     logging.info(f"{str(base_model.tags)}: Running scenarios")
     models = do_fit_scenarios(base_model_args=base_model_args, scenario_args_list=scenario_model_args,
