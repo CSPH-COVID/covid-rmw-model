@@ -398,7 +398,7 @@
       "immun": "medium"
     },
     "vals": {
-      "2020-01-01": 0.5
+      "2020-01-01": 0.7
     },
     "desc": "80% immunity, conferred by a single vaccine (does not decay to none)"
   },

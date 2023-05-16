@@ -135,7 +135,7 @@ def wrapper_run(args: dict):
     # MODEL FITTING
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
-    base_model = do_single_fit(**base_model_args)
+    #base_model = do_single_fit(**base_model_args)
     # COE model for testing variant fitting
     #base_model = RMWCovidModel(base_spec_id=5223)
     # NMW model for variant fitting
@@ -149,7 +149,9 @@ def wrapper_run(args: dict):
     # CON Model with new parameters
     #base_model = RMWCovidModel(base_spec_id=5229)
     #base_model.prep(pickle_matrices=False)
-
+    # CON Model, testing variant optimization
+    base_model = RMWCovidModel(base_spec_id=5235)
+    base_model.prep()
     base_model.solve_seir()
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
         pickle.dump(base_model.solution_ydf, f)

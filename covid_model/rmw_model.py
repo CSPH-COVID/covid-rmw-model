@@ -84,7 +84,7 @@ class RMWCovidModel:
         self.__seeds = {}
         self.__seed_offsets = {}
         self.__seed_scalers = {}
-        self.__voffset_max = 14
+        self.__voffset_max = 30
         self.__soffset_max = 50
         self.variant_props = None
 
@@ -1710,7 +1710,7 @@ class RMWCovidModel:
         self.params_trange = sorted(list(set.union(*[set(param.keys()) for param_key in self.params_by_t.values() for param in param_key.values()])))
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
         # Build lookup for variant seeds, offset values and scaling values
-        self.__seed_offsets = {f"{variant}_seed":0.0 for variant in self.attrs["variant"] if variant != "none"}
+        self.__seed_offsets = {f"{variant}_seed":0 for variant in self.attrs["variant"] if variant != "none"}
         self.__seed_scalers = {f"{variant}_seed":1.0 for variant in self.attrs["variant"] if variant != "none"}
 
         for region in self.attrs["region"]:
@@ -2236,11 +2236,12 @@ class RMWCovidModel:
                 # Find a time key less than or equal to the current T value.
                 seed_str = f"{variant}_seed"
                 seed_arr = seeds[seed_str]
-                offset = self.seed_offsets[seed_str]
+                #offset = self.seed_offsets[seed_str]
                 scaler = self.seed_scalers[seed_str]
                 # Get the seed value from the parameters.
-                seed_val = self.soft_shift(seed_arr,offset)[t_int] * scaler
+                #seed_val = self.soft_shift(seed_arr,offset)[t_int] * scaler
                 #seed_val = seed_arr[int(np.clip(t_int+offset, 0, self.tend))] * scaler
+                seed_val = seed_arr[t_int]*scaler
                 if y[from_cmpt_index] - seed_val < 0:
                     raise ValueError(f"Seeding would cause compartment to become negative!\n{from_cmpt} Value: {y[from_cmpt_index]}\n{variant} Seed Value: {seed_val}")
                 # Subtract the seed value from the susceptible compartment.

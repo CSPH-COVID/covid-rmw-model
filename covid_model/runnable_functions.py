@@ -47,8 +47,10 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
     trange = range(tstart, tend+1)
     # hrf_finder
     # To take out hrf: change 'estimated_actual' to 'observed':
-    ydata = np.log(1+model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F'))
-
+    ydata = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F')
+    # Min-max scaling (scales to [0,1])
+    max_scale = ydata.max()
+    ydata = ydata / max_scale
     def tc_list_to_dict(tc_list):
         """convert tc output of curve_fit to a dict like in our model.
         curve_fit assumes you have a function which accepts a vector of inputs. So it will provide guesses for TC as a
@@ -74,73 +76,30 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
         """
         model.update_tc(tc_list_to_dict(test_tc), replace=False, update_lookup=False)
         model.solve_seir(y0=y0, tstart=tstart, tend=tend)
-        return np.log(1+model.solution_sum_Ih(tstart, tend, regions=regions))
+        return model.solution_sum_Ih(tstart, tend, regions=regions)/max_scale
     fitted_tc, fitted_tc_cov = spo.curve_fit(
         f=func,
         xdata=trange,
         ydata=ydata,
         p0=[tc[t][region] for t in tc_ts for region in model.regions],
         bounds=([tc_min] * len(tc_ts) * len(regions), [tc_max] * len(tc_ts) * len(regions)),
-        verbose=2,
-        ftol=0.01)
+        verbose=2)
     fitted_tc = tc_list_to_dict(fitted_tc)
     return fitted_tc, fitted_tc_cov
 
 
-def __single_batch_fit_with_variant(model: RMWCovidModel, tc_min, tc_max, variant, yd_start=None, tstart=None, tend=None, regions=None):
-    """function to fit TC for a single batch of time for a model
-
-    Only TC values which lie in the specified regions between tstart and tend will be fit.
-
-    Args:
-        model: model to fit
-        tc_min: minimum allowable TC
-        tc_max: maximum allowable TC
-        yd_start: initial conditions for the model at tstart. If None, then model's y0_dict is used.
-        tstart: start time for this batch
-        tend: end time for this batch
-        regions: regions which should be fit. If None, all regions will be fit
-
-    Returns: Fitted TC values and the estimated covariance matrix between the different TC values.
-
-    """
+def __optimize_variants(model: RMWCovidModel, variants:list, tstart:int, tend:int, regions=None, yd_start=None):
     # define initial states
-    # Not sure about this one
-    max_scale = model.hosps.values.max()
     regions = model.regions if regions is None else regions
-    tc = {t: model.tc[t] for t in model.tc.keys() if tstart <= t <= tend}
-    tc_ts  = list(tc.keys())
     yd_start = model.y0_dict if yd_start is None else yd_start
     y0 = model.y0_from_dict(yd_start)
     trange = range(tstart, tend+1)
     # hrf_finder
     # To take out hrf: change 'estimated_actual' to 'observed':
-    ydata = model.hosps.loc[pd.MultiIndex.from_product([regions, [model.t_to_date(t) for t in trange]])]['observed'].to_numpy().flatten('F')
-    ydata = ydata / max_scale
-    ydata_variants = model.variant_props.loc[trange,variant].to_numpy().flatten("F")
-    ydata = np.concatenate([ydata,ydata_variants])
+    n_variants = len(variants)
+    ydata = model.variant_props.loc[trange,variants].to_numpy().flatten("F")
 
-    def tc_list_to_dict(tc_list):
-        """convert tc output of curve_fit to a dict like in our model.
-
-        curve_fit assumes you have a function which accepts a vector of inputs. So it will provide guesses for TC as a
-        vector. We need to convert that vector to a dictionary in order to update the model.
-
-        Args:
-            tc_list: the list of tc values to update.
-
-        Returns: dictionary of TC suitable to pass to the model.
-
-        """
-        i = 0
-        tc_dict = {t: {} for t in tc_ts}
-        for tc_t in tc.keys():
-            for region in regions:
-                tc_dict[tc_t][region] = tc_list[i]
-                i += 1
-        return tc_dict
-
-    def tc_variant_func(trange, *params):
+    def variant_func(params,*args):
         """A simple wrapper for the model's solve_seir method so that it can be optimzed by curve_fit
 
         Args:
@@ -150,28 +109,27 @@ def __single_batch_fit_with_variant(model: RMWCovidModel, tc_min, tc_max, varian
         Returns: hospitalizations for the regions of interest for the time periods of interest.
 
         """
-        test_tc = params[:-2]
-        seed_offset = params[-2]
-        seed_scale = params[-1]
-        seed_offset = seed_offset * model.voffset_max
-        model.update_seed_scalers({f"{variant}_seed": seed_scale})
-        model.update_seed_offsets({f"{variant}_seed": seed_offset})
-        model.update_tc(tc_list_to_dict(test_tc), replace=False, update_lookup=False)
+        offsets = params[:n_variants]
+        scales = params[n_variants:]
+        model.update_seed_offsets({f"{variant}_seed":offset for variant, offset in zip(variants,offsets)})
+        model.update_seed_scalers({f"{variant}_seed":scale for variant, scale in zip(variants,scales)})
         model.solve_seir(y0=y0, tstart=tstart, tend=tend)
-        return np.concatenate([model.solution_sum_Ih(tstart, tend, regions=regions)/max_scale,model.solution_var_props(tstart,tend,variants=[variant])])
+        return np.sum(np.square(model.solution_var_props(tstart,tend,variants=variants) - ydata))
 
+    def progress_log(xk, convergence):
+        logger.info(f"{str(model.tags)}: Diff Ev: xk={xk}")
 
-    fitted_p, fitted_p_cov = spo.curve_fit(
-        f=tc_variant_func,
-        xdata=trange,
-        ydata=ydata,
-        p0=[tc[t][region] for t in tc_ts for region in model.regions] +
-           [model.seed_offsets[region][f"{variant}_seed"] for region in model.regions] +
-           [model.seed_scalers[region][f"{variant}_seed"] for region in model.regions],
-        bounds=(([tc_min] * len(tc_ts) * len(regions)) + [-1.0, 0.0],    # Seed offset is bounded [0,1]
-                ([tc_max] * len(tc_ts) * len(regions)) + [1.0, 15.0]))  # Seed scale is bounded [0,15]
+    opt_result = spo.differential_evolution(func=variant_func,
+                                            bounds=[(-model.voffset_max,model.voffset_max) for _ in range(len(variants))] +
+                                                   [(0,model.soffset_max) for _ in range(len(variants))],
+                                            integrality=[True]*len(variants) + [False]*len(variants),
+                                            x0=[model.seed_offsets[f"{variant}_seed"] for variant in variants] +
+                                               [model.seed_scalers[f"{variant}_seed"] for variant in variants],
+                                            disp=True,
+                                            polish=False,
+                                            callback=progress_log)
 
-    return fitted_p, fitted_p_cov
+    return opt_result
 
 
 def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevant_variants, yd_start=None, model_start_t = None,  tstart=None, tend=None, regions=None):
@@ -242,15 +200,15 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
 
         """
         # Extract parameters
-        test_tc = params[:-2*n_relevant_variants]
-        var_seed_offsets = params[len(test_tc):-n_relevant_variants]
-        var_seed_scalers = params[len(test_tc) + n_relevant_variants:]
+        test_tc = params[:-n_relevant_variants]
+        #var_seed_offsets = params[len(test_tc):-n_relevant_variants]
+        var_seed_scalers = params[len(test_tc):]
         # Convert offsets to integers
         #var_offsets_int = [int(np.round(v * voffset_max)) for v in var_seed_offsets]
         # Update offsets
-        model.update_seed_offsets({f"{variant}_seed":offset*model.voffset_max for variant,offset in zip(relevant_variants, var_seed_offsets)})
+        #model.update_seed_offsets({f"{variant}_seed":offset*model.voffset_max for variant,offset in zip(relevant_variants, var_seed_offsets)})
         # Update scaling values
-        model.update_seed_scalers({f"{variant}_seed":scaler*model.soffset_max for variant,scaler in zip(relevant_variants, var_seed_scalers)})
+        model.update_seed_scalers({f"{variant}_seed": scaler for variant,scaler in zip(relevant_variants, var_seed_scalers)})
         # Update TC
         model.update_tc(tc_list_to_dict(test_tc), replace=False, update_lookup=False)
         # Solve the model
@@ -270,15 +228,15 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
         xdata=trange,
         ydata=ydata,
         p0=[tc[t][region] for t in tc_ts for region in model.regions] +  # TC guesses
-           ([model.seed_offsets[f"{variant}_seed"]/model.voffset_max for variant in relevant_variants]) +  # Offset guesses
-           ([model.seed_scalers[f"{variant}_seed"]/model.soffset_max for variant in relevant_variants]), # Scaler guesses
+           #([model.seed_offsets[f"{variant}_seed"]/model.voffset_max for variant in relevant_variants]) +  # Offset guesses
+           ([model.seed_scalers[f"{variant}_seed"] for variant in relevant_variants]), # Scaler guesses
         bounds=(
             ([tc_min] * len(tc_ts) * len(regions)) +  # TC min bound
-            ([-1.0] * n_relevant_variants) +  # Offset min bound
+            #([-1.0] * n_relevant_variants) +  # Offset min bound
             ([0.0] * n_relevant_variants), # Scaler min bound
             ([tc_max] * len(tc_ts) * len(regions)) +
-            ([1.0] * n_relevant_variants) +
-            ([1.0] * n_relevant_variants)
+            #([1.0] * n_relevant_variants) +
+            ([model.soffset_max] * n_relevant_variants)
         ),
         verbose=2
     )
@@ -517,13 +475,30 @@ def do_variant_optimization(model: RMWCovidModel, outdir:str,  tc_min:float=0.0,
         logger.info(f"{str(model.tags)}: Variant pair ({v1}, {v2}) appears between "
                     f"{model.t_to_date(vwindow_start)} and {model.t_to_date(vwindow_end)}")
 
+        # Iterate fitting the variant seeds and fitting TC.
+        # opt_result = __optimize_variants(model=model,
+        #                                  variants=[v1,v2],
+        #                                  tstart=vwindow_start,
+        #                                  tend=vwindow_end,
+        #                                  yd_start=vwindow_ydict)
+        # model.tags["iter"] = f"{i+1}of{n_iters}"
+        # model.tags["opt"] = "post_var"
+        # forward_sim_plot(model,outdir=outdir)
+        # fitted_tc_, fitted_tc_cov = __single_batch_fit(model=model,
+        #                                               tc_min=tc_min,
+        #                                               tc_max=tc_max,
+        #                                               yd_start=vwindow_ydict,
+        #                                               tstart=vwindow_start,
+        #                                               tend=vwindow_end)
+        # model.tags["opt"] = "post_tc"
+        # forward_sim_plot(model,outdir=outdir)
         fitted_p, fitted_p_cov = __single_batch_fit_variant_opt(model,
-                                                             tc_min=tc_min,
-                                                             tc_max=tc_max,
-                                                             relevant_variants=[v1,v2],
-                                                             yd_start=vwindow_ydict,
-                                                             tstart=vwindow_start,
-                                                             tend=vwindow_end)
+                                                                tc_min=tc_min,
+                                                                tc_max=tc_max,
+                                                                relevant_variants=[v1, v2],
+                                                                yd_start=vwindow_ydict,
+                                                                tstart=vwindow_start,
+                                                                tend=vwindow_end)
         fitted_tc = fitted_p[:-4]
         #fitted_offset = fitted_p[-4:-2]
         #current_offset = model.seed_offsets[f"{v1,v2}_seed"]
