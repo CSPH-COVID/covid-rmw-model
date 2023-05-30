@@ -49,33 +49,25 @@
   },
   {
     "param": "pS",
-    "attrs": {
-      "age": "0-17"
-    },
+    "attrs": null,
     "vals": {
-      "2020-01-01": 0.110023
+      "2020-01-01": 0.8523
     },
     "desc": "11% of infections among 0-17 are symptomatic"
   },
   {
     "param": "pS",
     "attrs": {
-      "age": "18-64"
+      "vacc": [
+        "shot2",
+        "booster1",
+        "booster23"
+      ]
     },
-    "vals": {
-      "2020-01-01": 0.437025209
+    "mults": {
+      "2020-01-01": 0.92
     },
-    "desc": "44% of infections among 18-64 are symptomatic"
-  },
-  {
-    "param": "pS",
-    "attrs": {
-      "age": "65+"
-    },
-    "vals": {
-      "2020-01-01": 0.774879
-    },
-    "desc": "77% of infections among 65+ are symptomatic"
+    "desc": "Omicrons have a 16.4% lower proportion of symptomatic infections for those with no or weak immunity compared to Delta"
   },
   {
     "param": "hosp",
@@ -83,9 +75,7 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.0286,
-      "2020-06-19": 0.0286,
-      "2020-09-30": 0.0223
+      "2020-01-01": 0.012
     },
     "desc": "proportion of symptomatic infections among 0-17 that are hospitalized (CO), which changes over time"
   },
@@ -95,9 +85,7 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.05521973,
-      "2020-06-19": 0.055295042,
-      "2020-09-30": 0.045090104
+      "2020-01-01": 0.0392
     },
     "desc": "proportion of symptomatic infections among 18-64 that are hospitalized (CO), which changes over time"
   },
@@ -107,9 +95,7 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.0995,
-      "2020-06-19": 0.0995,
-      "2020-09-30": 0.1255
+      "2020-01-01": 0.2244
     },
     "desc": "proportion of symptomatic infections among 65+ that are hospitalized (CO), which changes over time"
   },
@@ -119,10 +105,10 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.005504587,
-      "2020-07-01": 0.005504587,
-      "2020-09-30": 0.005504587,
-      "2021-02-01": 0.005504587
+      "2020-01-01": 0.0269001832,
+      "2020-08-01": 0.0045143039,
+      "2021-09-01": 0.0020657191,
+      "2022-04-01": 0.0009390731
     },
     "desc": "proportion of hospitalized 0-17 that die"
   },
@@ -132,10 +118,10 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.044384033,
-      "2020-07-01": 0.024710008,
-      "2020-09-30": 0.036186522,
-      "2021-02-01": 0.028040246
+      "2020-01-01": 0.0709274062,
+      "2020-08-01": 0.0512344285,
+      "2021-09-01": 0.0779409681,
+      "2022-04-01": 0.0340899090
     },
     "desc": "proportion of hospitalized 18-64 that die"
   },
@@ -145,10 +131,10 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.2979,
-      "2020-07-01": 0.2037,
-      "2020-09-30": 0.2037,
-      "2021-02-01": 0.15
+      "2020-01-01": 0.2436673905,
+      "2020-08-01": 0.1471926816,
+      "2021-09-01": 0.1870312220,
+      "2022-04-01": 0.1120620489
     },
     "desc": "proportion of hospitalized 65+ that die"
   },
@@ -158,9 +144,10 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.000147,
-      "2020-07-01": 0.000147,
-      "2021-02-01": 0.000147
+      "2020-01-01": 0.00000000000,
+      "2020-08-01": 0.00003032527,
+      "2021-09-01": 0.00014168299,
+      "2022-04-01": 0.00027093696
     },
     "desc": "proportion of non-hospitalized 0-17 that die"
   },
@@ -170,9 +157,10 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.001068919,
-      "2020-07-01": 0.000807623,
-      "2021-02-01": 0.000746142
+      "2020-01-01": 0.00476306909,
+      "2020-08-01": 0.00179290380,
+      "2021-09-01": 0.00247541561,
+      "2022-04-01": 0.00134378315
     },
     "desc": "proportion of non-hospitalized 18-64 that die"
   },
@@ -182,9 +170,10 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.02806,
-      "2020-07-01": 0.0152,
-      "2021-02-01": 0.0051
+      "2020-01-01": 0.17917382030,
+      "2020-08-01": 0.05856958840,
+      "2021-09-01": 0.04388031185,
+      "2022-04-01": 0.02680843110
     },
     "desc": "proportion of non-hospitalized 65+ that die"
   },
@@ -194,9 +183,9 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 5.8303,
-      "2020-08-01": 5.5747,
-      "2021-12-03": 5.5747
+      "2020-01-01": 8.666667,
+      "2020-12-01": 5.526147,
+      "2021-12-01": 4.870479
     },
     "desc": "hospital length of stay in days among 0-17 (CO)"
   },
@@ -206,9 +195,9 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 8.505509701,
-      "2020-08-01": 6.898889621,
-      "2021-12-03": 6.898889621
+      "2020-01-01": 8.318033,
+      "2020-12-01": 8.192808,
+      "2021-12-01": 6.301076
     },
     "desc": "hospital length of stay in days among 18-64 (CO)"
   },
@@ -218,169 +207,139 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 10.53665902,
-      "2020-08-01": 8.136581647,
-      "2021-12-03": 8.136581647
+      "2020-01-01": 9.919149,
+      "2020-12-01": 9.846983,
+      "2021-12-01": 6.304208
     },
     "desc": "hospital length of stay in days among 65+ (CO)"
   },
   {
     "param": "priorinf_fail_rate",
-    "attrs": {
-      "age": "0-17"
-    },
+    "attrs": null,
     "vals": {
-      "2020-01-01": 0.03
+      "2020-01-01": 0.089
     },
     "desc": "3% of natural infections among 0-17 fail to confer immunity"
   },
   {
-    "param": "priorinf_fail_rate",
+    "param": "shot1_ve",
+    "attrs": {
+      "age": "0-17"
+    },
+    "vals": {
+      "2020-01-01": 0.98
+    },
+    "desc": "2% of first shots among 0-17 fail to confer immunity"
+  },
+  {
+    "param": "shot1_ve",
     "attrs": {
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.03
+      "2020-01-01": 0.98
     },
-    "desc": "3% of natural infections among 18-64 fail to confer immunity"
+    "desc": "2% of first shots among 18-64 fail to confer immunity"
   },
   {
-    "param": "priorinf_fail_rate",
+    "param": "shot1_ve",
     "attrs": {
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.12
+      "2020-01-01": 0.92
     },
-    "desc": "12% of natural infections among 65+ fail to confer immunity"
+    "desc": "8% of first shots among 65+ fail to confer immunity"
   },
-{
-  "param": "shot1_ve",
-  "attrs": {
-    "age": "0-17"
-  },
-  "vals": {
-    "2020-01-01": 0.98
-  },
-  "desc": "2% of first shots among 0-17 fail to confer immunity"
-},
-{
-  "param": "shot1_ve",
-  "attrs": {
-    "age": "18-64"
-  },
-  "vals": {
-    "2020-01-01": 0.98
-  },
-  "desc": "2% of first shots among 18-64 fail to confer immunity"
-},
-{
-  "param": "shot1_ve",
-  "attrs": {
-    "age": "65+"
-  },
-  "vals": {
-    "2020-01-01": 0.92
-  },
-  "desc": "8% of first shots among 65+ fail to confer immunity"
-},
-{
-  "param": "shot2_ve",
-  "attrs": {
-    "age": "0-17"
-  },
-  "vals": {
-    "2020-01-01": 0.98
-  },
-  "desc": "2% of second shots among 0-17 whose first shots failed fail to confer immunity"
-},
-{
-  "param": "shot2_ve",
-  "attrs": {
-    "age": "18-64"
-  },
-  "vals": {
-    "2020-01-01": 0.98
-  },
-  "desc": "2% of second shots among 18-64 whose first shots failed fail to confer immunity"
-},
-{
-  "param": "shot2_ve",
-  "attrs": {
-    "age": "65+"
-  },
-  "vals": {
-    "2020-01-01": 0.92
-  },
-  "desc": "8% of second shots among 65+ whose first shots failed fail to confer immunity"
-},
-{
-  "param": "booster1_ve",
-  "attrs": {
-    "age": "0-17"
-  },
-  "vals": {
-    "2020-01-01": 0.99
-  },
-  "desc": "1% of first boosters among 0-17 whose first and second shots failed fail to confer immunity"
-},
-{
-  "param": "booster1_ve",
-  "attrs": {
-    "age": "18-64"
-  },
-  "vals": {
-    "2020-01-01": 0.99
-  },
-  "desc": "1% of first boosters among 18-64 whose first and second shots failed fail to confer immunity"
-},
-{
-  "param": "booster1_ve",
-  "attrs": {
-    "age": "65+"
-  },
-  "vals": {
-    "2020-01-01": 0.96
-  },
-  "desc": "4% of first boosters among 65+ whose first and second shots failed fail to confer immunity"
-},
-{
-  "param": "booster23_ve",
-  "attrs": {
-    "age": "0-17"
-  },
-  "vals": {
-    "2020-01-01": 0.99
-  },
-  "desc": "1% of second boosters among 0-17 whose first, second, and first booster shots failed fail to confer immunity"
-},
-{
-  "param": "booster23_ve",
-  "attrs": {
-    "age": "18-64"
-  },
-  "vals": {
-    "2020-01-01": 0.99
-  },
-  "desc": "1% of second boosters among 18-64 whose first, second, and first booster shots failed fail to confer immunity"
-},
-{
-  "param": "booster23_ve",
-  "attrs": {
-    "age": "65+"
-  },
-  "vals": {
-    "2020-01-01": 0.96
-  },
-  "desc": "4% of second boosters among 65+ whose first, second, and first booster shots failed fail to confer immunity"
-},
   {
-    "param": "immunity",
-    "attrs": null,
-    "vals": {
-      "2020-01-01": 0
+    "param": "shot2_ve",
+    "attrs": {
+      "age": "0-17"
     },
-    "desc": "protection against infection (shouldn't be strictly necessary to set this, given defs below)"
+    "vals": {
+      "2020-01-01": 0.98
+    },
+    "desc": "2% of second shots among 0-17 whose first shots failed fail to confer immunity"
+  },
+  {
+    "param": "shot2_ve",
+    "attrs": {
+      "age": "18-64"
+    },
+    "vals": {
+      "2020-01-01": 0.98
+    },
+    "desc": "2% of second shots among 18-64 whose first shots failed fail to confer immunity"
+  },
+  {
+    "param": "shot2_ve",
+    "attrs": {
+      "age": "65+"
+    },
+    "vals": {
+      "2020-01-01": 0.92
+    },
+    "desc": "8% of second shots among 65+ whose first shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster1_ve",
+    "attrs": {
+      "age": "0-17"
+    },
+    "vals": {
+      "2020-01-01": 0.99
+    },
+    "desc": "1% of first boosters among 0-17 whose first and second shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster1_ve",
+    "attrs": {
+      "age": "18-64"
+    },
+    "vals": {
+      "2020-01-01": 0.99
+    },
+    "desc": "1% of first boosters among 18-64 whose first and second shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster1_ve",
+    "attrs": {
+      "age": "65+"
+    },
+    "vals": {
+      "2020-01-01": 0.96
+    },
+    "desc": "4% of first boosters among 65+ whose first and second shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster23_ve",
+    "attrs": {
+      "age": "0-17"
+    },
+    "vals": {
+      "2020-01-01": 0.99
+    },
+    "desc": "1% of second boosters among 0-17 whose first, second, and first booster shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster23_ve",
+    "attrs": {
+      "age": "18-64"
+    },
+    "vals": {
+      "2020-01-01": 0.99
+    },
+    "desc": "1% of second boosters among 18-64 whose first, second, and first booster shots failed fail to confer immunity"
+  },
+  {
+    "param": "booster23_ve",
+    "attrs": {
+      "age": "65+"
+    },
+    "vals": {
+      "2020-01-01": 0.96
+    },
+    "desc": "4% of second boosters among 65+ whose first, second, and first booster shots failed fail to confer immunity"
   },
   {
     "param": "immunity",
@@ -467,7 +426,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -485,7 +443,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -503,7 +460,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45",
         "bq",
         "xbb"
@@ -515,7 +471,7 @@
     },
     "desc": "90% of people who have been boosted are protected against severe Omicron"
   },
-    {
+  {
     "param": "severe_immunity",
     "attrs": {
       "vacc": [
@@ -524,7 +480,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -545,21 +500,28 @@
   {
     "param": "immune_escape",
     "from_attrs": {
-      "variant": "none",
-      "immun": "medium"
+      "variant": [
+        "none",
+        "wildtype",
+        "alpha"
+      ]
     },
     "to_attrs": {
-      "variant": "delta"
+      "variant": [
+        "delta"
+      ],
+      "immun": [
+        "high",
+        "medium"
+      ]
     },
     "vals": {
-      "2020-01-01": 0.375
-    },
-    "desc": "37.5% of weakly immune individuals can get reinfected with Delta"
+      "2020-01-01": 0.180
+    }
   },
   {
     "param": "immune_escape",
     "from_attrs": {
-      "immun": "high",
       "variant": [
         "none",
         "wildtype",
@@ -569,135 +531,117 @@
     },
     "to_attrs": {
       "variant": [
-        "omicron",
-        "ba2"
+        "omicron"
+      ],
+      "immun": [
+        "high",
+        "medium"
       ]
     },
     "vals": {
-      "2020-01-01": 0.1
-    },
-    "desc": "given prior infection with a pre-Omicron variant, 10% of strongly immune individuals can get reinfected with BA.1, BA.2, or BA.2.12.1"
+      "2020-01-01": 0.547
+    }
   },
   {
     "param": "immune_escape",
     "from_attrs": {
-      "immun": "medium",
       "variant": [
         "none",
         "wildtype",
         "alpha",
-        "delta"
+        "delta",
+        "omicron"
       ]
     },
     "to_attrs": {
       "variant": [
-        "omicron",
         "ba2"
+      ],
+      "immun": [
+        "high",
+        "medium"
       ]
     },
     "vals": {
-      "2020-01-01": 0.75
-    },
-    "desc": "given prior infection with a pre-Omicron variant, 75% of weakly immune individuals can get reinfected with BA.1, BA.2, or BA.2.12.1"
+      "2020-01-01": 0.30
+    }
   },
   {
     "param": "immune_escape",
     "from_attrs": {
-      "immun": "medium",
-      "variant": [
-        "omicron",
-        "ba2"
-      ]
-    },
-    "to_attrs": {
-      "variant": [
-
-      ]
-    },
-    "vals": {
-      "2020-01-01": 0.15
-    },
-    "desc": "given prior infection with BA.1 or BA.2, 25% of weakly immune individuals can get reinfected with BA.2.12.1"
-  },
-  {
-    "param": "immune_escape",
-    "from_attrs": {
-      "immun": "high",
       "variant": [
         "none",
         "wildtype",
         "alpha",
-        "delta"
+        "delta",
+        "omicron",
+        "ba2"
       ]
     },
     "to_attrs": {
       "variant": [
         "ba45"
+      ],
+      "immun": [
+        "high",
+        "medium"
       ]
     },
     "vals": {
-      "2020-01-01": 0.015
-    },
-    "desc": "given prior infection with a pre-Omicron variant, 15% of strongly immune individuals can get reinfected with BA.4/5"
+      "2020-01-01": 0.34
+    }
   },
   {
     "param": "immune_escape",
     "from_attrs": {
-      "immun": "medium",
       "variant": [
         "none",
         "wildtype",
         "alpha",
-        "delta"
+        "delta",
+        "omicron",
+        "ba2",
+        "ba45"
       ]
     },
     "to_attrs": {
       "variant": [
-        "ba45"
+        "bq"
+      ],
+      "immun": [
+        "high",
+        "medium"
       ]
     },
     "vals": {
-      "2020-01-01": 0.75
-    },
-    "desc": "given prior infection with a pre-Omicron variant, 80% of weakly immune individuals can get reinfected with BA.4/5"
+      "2020-01-01": 0.34
+    }
   },
   {
     "param": "immune_escape",
     "from_attrs": {
-      "immun": "high",
       "variant": [
+        "none",
+        "wildtype",
+        "alpha",
+        "delta",
         "omicron",
-        "ba2"
+        "ba2",
+        "ba45"
       ]
     },
     "to_attrs": {
       "variant": [
-        "ba45"
+        "xbb"
+      ],
+      "immun": [
+        "high",
+        "medium"
       ]
     },
     "vals": {
-      "2020-01-01": 0.05
-    },
-    "desc": "given prior infection with an Omicron variant, 4% of strongly immune individuals can get reinfected with BA.4/5"
-  },
-  {
-    "param": "immune_escape",
-    "from_attrs": {
-      "immun": "medium",
-      "variant": [
-        "omicron",
-        "ba2"
-      ]
-    },
-    "to_attrs": {
-      "variant": [
-        "ba45"
-      ]
-    },
-    "vals": {
-      "2020-01-01": 0.40
-    },
-    "desc": "given prior infection with an Omicron variant, 40% of weakly immune individuals can get reinfected with BA.4/5"
+      "2020-01-01": 0.36
+    }
   },
   {
     "param": "imm_decay_high_medium",
@@ -707,7 +651,7 @@
     },
     "desc": "it takes 360 days for strong immunity to decay to weak immunity (weak immunity is assumed not to decay to no immunity)"
   },
-    {
+  {
     "param": "imm_decay_medium_low",
     "attrs": null,
     "vals": {
@@ -745,7 +689,7 @@
     },
     "desc": "scaled delta seed for reference region (CO North)"
   },
-{
+  {
     "param": "omicron_seed",
     "attrs": null,
     "vals": {
@@ -755,7 +699,7 @@
     },
     "desc": "scaled BA.1 seed for reference region (CO North)"
   },
-{
+  {
     "param": "ba2_seed",
     "attrs": null,
     "vals": {
@@ -765,7 +709,7 @@
     },
     "desc": "scaled BA.2 seed for reference region (CO North)"
   },
-{
+  {
     "param": "ba45_seed",
     "attrs": null,
     "vals": {
@@ -775,7 +719,7 @@
     },
     "desc": "scaled BA.4/5 seed for reference region (CO North)"
   },
-{
+  {
     "param": "bq_seed",
     "attrs": null,
     "vals": {
@@ -838,7 +782,11 @@
   {
     "param": "betta",
     "attrs": {
-      "variant": "ba45"
+      "variant": [
+        "ba45",
+        "bq",
+        "xbb"
+      ]
     },
     "mults": {
       "2020-01-01": 10.71
@@ -859,7 +807,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -874,7 +821,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -884,71 +830,12 @@
     "desc": "Omicrons have 67% higher recovery rates (i.e. shorter infectious periods) than wildtype"
   },
   {
-    "param": "pS",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-
-        "ba45"
-      ],
-      "vacc": [
-        "none",
-        "shot1"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.836
-    },
-    "desc": "Omicrons have a 16.4% lower proportion of symptomatic infections for those with no or weak immunity compared to Delta"
-  },
-  {
-    "param": "pS",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-
-        "ba45"
-      ],
-      "vacc": [
-        "shot2",
-        "booster1"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.594
-    },
-    "desc": "Omicrons have a 40.6% lower proportion of symptomatic infections for those who are vaccinated compared to Delta"
-  },
-  {
-    "param": "pS",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-
-        "ba45",
-        "bq",
-        "xbb"
-      ],
-      "vacc": [
-        "booster23"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.594,
-      "2022-08-31": 0.5
-    },
-    "desc": "Omicrons have a 40.6% lower proportion of symptomatic infections for those who are vaccinated compared to Delta"
-  },
-  {
     "param": "hosp",
     "attrs": {
       "variant": "alpha"
     },
     "mults": {
-      "2020-01-01": 1.4
+      "2020-01-01": 1.52
     },
     "desc": "Alpha sends 40% more people to the hospital compared to wildtype"
   },
@@ -958,7 +845,7 @@
       "variant": "delta"
     },
     "mults": {
-      "2020-01-01": 2.38
+      "2020-01-01": 2.08
     },
     "desc": "Delta sends 2.38x more people to the hospital compared to wildtype"
   },
@@ -968,12 +855,13 @@
       "variant": [
         "omicron",
         "ba2",
-
-        "ba45"
+        "ba45",
+        "bq",
+        "xbb"
       ]
     },
     "mults": {
-      "2020-01-01": 0.833
+      "2020-01-01": 1.0
     },
     "desc": "Omicrons send 16.7% fewer people to the hospital compared to wildtype"
   },
@@ -983,7 +871,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -1018,7 +905,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -1053,7 +939,6 @@
       "variant": [
         "omicron",
         "ba2",
-
         "ba45"
       ]
     },
@@ -1064,20 +949,29 @@
   },
   {
     "param": "pax_prev",
-    "attrs": null,
+    "attrs": {
+      "age": [
+        "0-17",
+        "18-64"
+      ]
+    },
     "vals": {
-      "2020-01-24": 0.0,
-      "2021-12-28": 0.0026714285714285716,
-      "2022-01-04": 0.007328571428571428,
-      "2022-01-11": 0.012385714285714286,
-      "2022-01-18": 0.030000000000000002,
-      "2022-01-25": 0.05332857142857143,
-      "2022-02-01": 0.07667142857142857,
-      "2022-02-08": 0.09666,
-      "2022-02-13": 0.1067,
-      "2022-03-07": 0.13332857142857144,
-      "2022-03-14": 0.17666666666666667,
-      "2022-03-20": 0.2
+      "2020-01-01": 0.0
+    },
+    "desc": "proportion of COVID-19 cases that receive Paxlovid, which changes over time"
+  },
+  {
+    "param": "pax_prev",
+    "attrs": {
+      "age": [
+        "65+"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.0,
+      "2021-12-23": 0.0189,
+      "2022-04-27": 0.0584,
+      "2022-09-04": 0.0303
     },
     "desc": "proportion of COVID-19 cases that receive Paxlovid, which changes over time"
   },
@@ -1085,23 +979,34 @@
     "param": "pax_hosp_adj",
     "attrs": null,
     "vals": {
-      "2020-01-01": 0.11
+      "2020-01-01": 0.111
     },
     "desc": "Paxlovid reduces the probability of hospitalization by 89%"
   },
   {
     "param": "mab_prev",
-    "attrs": null,
+    "attrs": {
+      "age": [
+        "0-17",
+        "18-64"
+      ]
+    },
     "vals": {
-      "2020-01-24": 0.0,
-      "2021-10-02": 0.0106,
-      "2021-10-09": 0.029150000000000002,
-      "2021-10-16": 0.0477,
-      "2021-10-23": 0.0689,
-      "2021-11-01": 0.09275,
-      "2021-11-10": 0.106,
-      "2021-12-17": 0.0651111111111111,
-      "2021-12-26": 0.01
+      "2020-01-01": 0.0
+    },
+    "desc": "proportion of COVID-19 cases that receive monoclonal antibodies, which changes over time"
+  },
+  {
+    "param": "mab_prev",
+    "attrs": {
+      "age": [
+        "65+"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.0,
+      "2020-11-10": 0.029,
+      "2023-01-27": 0.0
     },
     "desc": "proportion of COVID-19 cases that receive monoclonal antibodies, which changes over time"
   },
@@ -1109,25 +1014,174 @@
     "param": "mab_hosp_adj",
     "attrs": null,
     "vals": {
-      "2020-01-01": 0.21
+      "2020-01-01": 0.37
     },
     "desc": "monoclonal antibodies reduce the probability of hospitalization by 79%"
   },
-  {"param": "mab_hlos_adj", "attrs": null, "vals": {"2020-01-01": 0.72}, "desc": "monoclonal antibodies reduce hospital length of stay by 28%"},
-
-  {"param": "betta", "attrs": {"variant": "bq"}, "mults": {"2020-01-01": 10.71}, "desc": "bq is equally as infectious as BA.5"},
-  {"param": "betta", "attrs": {"variant": "xbb"}, "mults": {"2020-01-01": 10.71}, "desc": "xbb is equally as infectious as BA.5"},
-  {"param": "hosp", "attrs": {"variant": "bq"}, "mults": {"2020-01-01": 1}, "desc": "baseline multiplier for bq hospitalization rate"},
-  {"param": "hosp", "attrs": {"variant": "xbb"}, "mults": {"2020-01-01": 1}, "desc": "baseline multiplier for xbb hospitalization rate"},
-  {"param": "immune_escape", "from_attrs": {"immun": "high" ,"variant": ["omicron", "ba2",  "ba45"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.055}, "desc": "given prior infection with any variant (or no variant), 7.5% of strongly immune individuals can get reinfected with bq"},
-  {"param": "immune_escape", "from_attrs": {"immun": "medium" ,"variant": ["omicron", "ba2",  "ba45"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.25}, "desc": "given prior infection with any variant (or no variant), 40% of individuals can get reinfected with bq"},
-
-  {"param": "immune_escape", "from_attrs": {"immun": "high" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.06}, "desc": "given prior infection with any variant (or no variant), 7.5% of strongly immune individuals can get reinfected with bq"},
-  {"param": "immune_escape", "from_attrs": {"immun": "medium" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["bq"]}, "vals": {"2020-01-01": 0.35}, "desc": "given prior infection with any variant (or no variant), 40% of individuals can get reinfected with bq"},
-
-  {"param": "immune_escape", "from_attrs": {"immun": "high" ,"variant": ["omicron", "ba2",  "ba45", "bq"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.12}, "desc": "given prior infection with any variant (or no variant), 8.5% of strongly immune individuals can get reinfected with xbb"},
-  {"param": "immune_escape", "from_attrs": {"immun": "medium" ,"variant": ["omicron", "ba2",  "ba45", "bq"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.42}, "desc": "given prior infection with any variant (or no variant), 50% of individuals can get reinfected with xbb"},
-
-  {"param": "immune_escape", "from_attrs": {"immun": "high" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.24}, "desc": "given prior infection with any variant (or no variant), 8.5% of strongly immune individuals can get reinfected with xbb"},
-  {"param": "immune_escape", "from_attrs": {"immun": "medium" ,"variant": ["none", "wildtype", "alpha", "delta"]}, "to_attrs": {"variant": ["xbb"]}, "vals": {"2020-01-01": 0.86}, "desc": "given prior infection with any variant (or no variant), 50% of individuals can get reinfected with xbb"}
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "high",
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba45"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "bq"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.055
+    },
+    "desc": "given prior infection with any variant (or no variant), 7.5% of strongly immune individuals can get reinfected with bq"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "medium",
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba45"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "bq"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.25
+    },
+    "desc": "given prior infection with any variant (or no variant), 40% of individuals can get reinfected with bq"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "high",
+      "variant": [
+        "none",
+        "wildtype",
+        "alpha",
+        "delta"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "bq"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.06
+    },
+    "desc": "given prior infection with any variant (or no variant), 7.5% of strongly immune individuals can get reinfected with bq"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "medium",
+      "variant": [
+        "none",
+        "wildtype",
+        "alpha",
+        "delta"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "bq"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.35
+    },
+    "desc": "given prior infection with any variant (or no variant), 40% of individuals can get reinfected with bq"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "high",
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba45",
+        "bq"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "xbb"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.12
+    },
+    "desc": "given prior infection with any variant (or no variant), 8.5% of strongly immune individuals can get reinfected with xbb"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "medium",
+      "variant": [
+        "omicron",
+        "ba2",
+        "ba45",
+        "bq"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "xbb"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.42
+    },
+    "desc": "given prior infection with any variant (or no variant), 50% of individuals can get reinfected with xbb"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "high",
+      "variant": [
+        "none",
+        "wildtype",
+        "alpha",
+        "delta"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "xbb"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.24
+    },
+    "desc": "given prior infection with any variant (or no variant), 8.5% of strongly immune individuals can get reinfected with xbb"
+  },
+  {
+    "param": "immune_escape",
+    "from_attrs": {
+      "immun": "medium",
+      "variant": [
+        "none",
+        "wildtype",
+        "alpha",
+        "delta"
+      ]
+    },
+    "to_attrs": {
+      "variant": [
+        "xbb"
+      ]
+    },
+    "vals": {
+      "2020-01-01": 0.86
+    },
+    "desc": "given prior infection with any variant (or no variant), 50% of individuals can get reinfected with xbb"
+  }
 ]
