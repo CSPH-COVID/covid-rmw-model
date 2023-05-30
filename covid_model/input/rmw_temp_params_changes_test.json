@@ -227,7 +227,7 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.98
+      "2020-01-01": 0.61
     },
     "desc": "2% of first shots among 0-17 fail to confer immunity"
   },
@@ -237,7 +237,7 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.98
+      "2020-01-01": 0.61
     },
     "desc": "2% of first shots among 18-64 fail to confer immunity"
   },
@@ -247,7 +247,7 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.92
+      "2020-01-01": 0.54
     },
     "desc": "8% of first shots among 65+ fail to confer immunity"
   },
@@ -257,7 +257,7 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.98
+      "2020-01-01": 0.77
     },
     "desc": "2% of second shots among 0-17 whose first shots failed fail to confer immunity"
   },
@@ -267,7 +267,7 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.98
+      "2020-01-01": 0.77
     },
     "desc": "2% of second shots among 18-64 whose first shots failed fail to confer immunity"
   },
@@ -277,7 +277,7 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.92
+      "2020-01-01": 0.61
     },
     "desc": "8% of second shots among 65+ whose first shots failed fail to confer immunity"
   },
@@ -287,7 +287,7 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.99
+      "2020-01-01": 0.77
     },
     "desc": "1% of first boosters among 0-17 whose first and second shots failed fail to confer immunity"
   },
@@ -297,7 +297,7 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.99
+      "2020-01-01": 0.77
     },
     "desc": "1% of first boosters among 18-64 whose first and second shots failed fail to confer immunity"
   },
@@ -307,7 +307,7 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.96
+      "2020-01-01": 0.61
     },
     "desc": "4% of first boosters among 65+ whose first and second shots failed fail to confer immunity"
   },
@@ -317,7 +317,7 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 0.99
+      "2020-01-01": 0.77
     },
     "desc": "1% of second boosters among 0-17 whose first, second, and first booster shots failed fail to confer immunity"
   },
@@ -327,7 +327,7 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 0.99
+      "2020-01-01": 0.77
     },
     "desc": "1% of second boosters among 18-64 whose first, second, and first booster shots failed fail to confer immunity"
   },
@@ -337,7 +337,7 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 0.96
+      "2020-01-01": 0.61
     },
     "desc": "4% of second boosters among 65+ whose first, second, and first booster shots failed fail to confer immunity"
   },
@@ -357,7 +357,7 @@
       "immun": "medium"
     },
     "vals": {
-      "2020-01-01": 0.7
+      "2020-01-01": 0.5
     },
     "desc": "80% immunity, conferred by a single vaccine (does not decay to none)"
   },
@@ -382,111 +382,40 @@
   {
     "param": "severe_immunity",
     "attrs": {
+      "variant": [
+        "wildtype",
+        "alpha",
+        "delta"
+      ],
       "immun": [
-        "high",
-        "medium"
+        "strong",
+        "weak"
       ]
     },
     "vals": {
-      "2020-01-01": 0.975
+      "2020-01-01": 0.902
     },
-    "desc": "97.5% of people with some level of immunity are protected against severe disease"
+    "desc": "protection against severe disease, given infection"
   },
   {
     "param": "severe_immunity",
     "attrs": {
-      "immun": [
-        "high",
-        "medium"
-      ],
-      "vacc": "none"
-    },
-    "vals": {
-      "2020-01-01": 0.5
-    },
-    "desc": "unvaccinated individuals whose immunity was conferred by natural infection have 47.5% less protection against severe disease than those whose strong or weak immunity was conferred by vaccination"
-  },
-  {
-    "param": "severe_immunity",
-    "attrs": {
-      "variant": "delta"
-    },
-    "mults": {
-      "2020-01-01": 0.9
-    },
-    "desc": "90% of people with a prior Delta infection are protected against severe disease"
-  },
-  {
-    "param": "severe_immunity",
-    "attrs": {
-      "vacc": [
-        "shot1",
-        "shot2"
-      ],
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.7
-    },
-    "desc": "70% of people who have completed a vaccine series are protected against severe Omicron"
-  },
-  {
-    "param": "severe_immunity",
-    "attrs": {
-      "vacc": [
-        "booster1"
-      ],
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.9
-    },
-    "desc": "90% of people who have been boosted are protected against severe Omicron"
-  },
-  {
-    "param": "severe_immunity",
-    "attrs": {
-      "vacc": [
-        "booster23"
-      ],
       "variant": [
         "omicron",
         "ba2",
         "ba45",
         "bq",
         "xbb"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.9,
-      "2022-08-31": 0.95
-    },
-    "desc": "90% of people who have been boosted are protected against severe Omicron"
-  },
-  {
-    "param": "severe_immunity",
-    "attrs": {
-      "vacc": [
-        "booster3"
       ],
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
+      "immun": [
+        "strong",
+        "weak"
       ]
     },
-    "mults": {
-      "2020-01-01": 0.95
+    "vals": {
+      "2020-01-01": 0.889
     },
-    "desc": "90% of people who have been boosted are protected against severe Omicron"
+    "desc": "protection against severe disease, given infection"
   },
   {
     "param": "immune_escape",
@@ -865,88 +794,6 @@
       "2020-01-01": 1.0
     },
     "desc": "Omicrons send 16.7% fewer people to the hospital compared to wildtype"
-  },
-  {
-    "param": "hlos",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.6
-    },
-    "desc": "Omicrons have a 40% shorter length of stay than wildtype"
-  },
-  {
-    "param": "dh",
-    "attrs": {
-      "variant": "alpha"
-    },
-    "mults": {
-      "2020-01-01": 1.15
-    },
-    "desc": "Alpha has a 15% higher death rate than wildtype for those who are hospitalized"
-  },
-  {
-    "param": "dh",
-    "attrs": {
-      "variant": "delta"
-    },
-    "mults": {
-      "2020-01-01": 1.3225
-    },
-    "desc": "Delta has a 32% higher death rate than wildtype for those who are hospitalized"
-  },
-  {
-    "param": "dh",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 1.3225
-    },
-    "desc": "Omicron has the same death rate as Delta for those who are hospitalized (LIKELY WRONG)"
-  },
-  {
-    "param": "dnh",
-    "attrs": {
-      "variant": "alpha"
-    },
-    "mults": {
-      "2020-01-01": 1.6
-    },
-    "desc": "Alpha has a 60% higher death rate than wildtype for those who are not hospitalized"
-  },
-  {
-    "param": "dnh",
-    "attrs": {
-      "variant": "delta"
-    },
-    "mults": {
-      "2020-01-01": 3.28
-    },
-    "desc": "Delta has a 3.28x higher death rate than wildtype for those who are not hospitalized"
-  },
-  {
-    "param": "dnh",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.13225
-    },
-    "desc": "Omicron has an 86.775% lower death rate than wildtype for those who are not hospitalized"
   },
   {
     "param": "pax_prev",
