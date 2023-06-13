@@ -1184,7 +1184,7 @@ class RMWCovidModel:
         idx_rearr = {v:i for i,v in enumerate(all_variants)}
         variant_idcs = self.variant_compartments
         tmp_solution_y = self.solution_y[tstart:(tend+1)]
-        variant_inf_count = tmp_solution_y[:,variant_idcs].reshape(tmp_solution_y.shape[0],len(all_variants),-1).sum(axis=-1)
+        variant_inf_count = np.clip(tmp_solution_y[:,variant_idcs].reshape(tmp_solution_y.shape[0],len(all_variants),-1).sum(axis=-1),0.0,None)
         variant_inf_props = variant_inf_count / np.maximum(variant_inf_count.sum(axis=1,keepdims=True),np.finfo(np.float32).eps)
         var_inf_props_rearr = np.concatenate([variant_inf_props[:,idx_rearr[v]] for v in variants])
         return var_inf_props_rearr
@@ -2023,22 +2023,14 @@ class RMWCovidModel:
                                                graph=graph)
             for (from_shot, to_shot) in [('shot1', 'shot2'), ('shot2', 'booster1'), ('booster1', 'booster23')]:
                 for immun in self.attrs['immun']:
-                    if immun == 'low':
-                        # if immun is none, that means that the first vacc shot failed, which means that future shots may fail as well
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
                                                            {'vacc': f'{to_shot}', 'immun': f'high'},
                                                            from_coef=f'{to_shot}_per_available * {to_shot}_ve',
                                                            graph=graph)
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'low'},
+                                                           {'vacc': f'{to_shot}', 'immun': immun},
                                                            from_coef=f'{to_shot}_per_available * (1-{to_shot}_ve)',
                                                            graph=graph)
-                    else:
-                        self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'high'},
-                                                           from_coef=f'{to_shot}_per_available',
-                                                           graph=graph)
-
 
         # seed variants (only seed the ones in our attrs)
         # This is now implemented directly in the ode() function, since we need to handle which compartment to seed from
@@ -2097,8 +2089,9 @@ class RMWCovidModel:
         for variant in self.attrs['variant']:
             if variant == 'none':
                 continue
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='gamm * (1 - hosp - dnh) * (1 - priorinf_fail_rate)',graph=graph)
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * (1 - hosp - dnh) * priorinf_fail_rate',graph=graph)
+            # TODO fix this
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='gamm * (1 - hosp*(1-severe_immunity) - dnh*(1-severe_immunity)) * (1 - priorinf_fail_rate)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * (1 - hosp*(1-severe_immunity) - dnh*(1-severe_immunity)) * priorinf_fail_rate',graph=graph)
 
             for prior_immunity in self.attrs["immun"]:
                 # Three cases:
@@ -2110,10 +2103,11 @@ class RMWCovidModel:
                 self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant, 'immun': prior_immunity}, {'seir': 'S', 'immun': resulting_immunity}, to_coef='gamm * (1 - priorinf_fail_rate)',graph=graph)
                 self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant, 'immun': prior_immunity}, {'seir': 'S'}, to_coef='gamm * priorinf_fail_rate',graph=graph)
 
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate) * (1-mab_prev)',graph=graph)
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * (1-mab_prev)',graph=graph)
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * (1 - priorinf_fail_rate) * mab_prev',graph=graph)
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * priorinf_fail_rate * mab_prev',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate)',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * (1-mab_prev)',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate) * mab_prev',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * mab_prev',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate',graph=graph)
 
             self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'D'}, to_coef='gamm * dnh * (1 - severe_immunity)',graph=graph)
             self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'D'}, to_coef='1 / hlos * dh',graph=graph)
@@ -2134,6 +2128,8 @@ class RMWCovidModel:
             with open(graph_fname + ".pkl","wb") as f:
                 pickle.dump(graph,f)
             logger.info(f"{str(self.tags)} Writing traced graph to '{graph_fname}.gexf'.")
+            with open(f"{tags_to_str}_params.pkl", "wb") as f:
+                pickle.dump(self.params_by_t,f)
             #nx.write_gexf(graph,graph_fname + ".gexf")
 
     def build_region_picker_matrix(self):
@@ -2221,6 +2217,7 @@ class RMWCovidModel:
             from_cmpt = self.compartments[from_cmpt_index]
             # Seeds
             seeds = self.seeds[region]
+            #n_t = np.arange(self.tend+1)
             # For each variant
             for variant in self.attrs["variant"]:
                 if variant == "none":
@@ -2236,12 +2233,14 @@ class RMWCovidModel:
                 # Find a time key less than or equal to the current T value.
                 seed_str = f"{variant}_seed"
                 seed_arr = seeds[seed_str]
+
                 #offset = self.seed_offsets[seed_str]
                 scaler = self.seed_scalers[seed_str]
                 # Get the seed value from the parameters.
-                #seed_val = self.soft_shift(seed_arr,offset)[t_int] * scaler
+                #seed_val = self.soft_shift(seed_arr,offset)[t_int]
                 #seed_val = seed_arr[int(np.clip(t_int+offset, 0, self.tend))] * scaler
                 seed_val = seed_arr[t_int]*scaler
+                #seed_val = np.interp(t_int+offset,np.arange(n_t),)
                 if y[from_cmpt_index] - seed_val < 0:
                     raise ValueError(f"Seeding would cause compartment to become negative!\n{from_cmpt} Value: {y[from_cmpt_index]}\n{variant} Seed Value: {seed_val}")
                 # Subtract the seed value from the susceptible compartment.

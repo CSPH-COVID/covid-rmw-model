@@ -1,39 +1,18 @@
 import copy
 import networkx as nx
 import numpy as np
+import pandas as pd
 import sympy
 import tensorflow as tf
+import tensorflow_probability as tfp
 import time
+import pickle
 import datetime as dt
+import scipy.integrate as spi
 from itertools import product
 from functools import cache
 from tf_data import ModelParameters
-
-
-class TimeVaryingParameter:
-
-    def __init__(self, indices, values):
-        self.val = None
-        self.idx = None
-        # Indices and values for the "value" variables
-        if values is None:
-            indices = [0]
-            values = [1.0]
-        self.n = len(indices)
-        self.range_n = tf.range(self.n)
-        self.update_vals(idx=indices, val=values)
-
-    def update_vals(self, idx, val):
-        if self.val is None or len(val) != self.val.shape[0]:
-            #print("Shape mismatch when updating variable, tf.Variable will be recreated...")
-            self.idx = tf.Variable(initial_value=idx, dtype=tf.int32)
-            self.val = tf.Variable(initial_value=val, dtype=tf.float32)
-        else:
-            self.idx.assign(idx)
-            self.val.assign(val)
-
-    def __getitem__(self, t):
-        return self.val[tf.reduce_max(self.range_n[(self.idx - t) <= 0])]
+#tf.debugging.enable_check_numerics()
 
 
 class Model:
@@ -48,7 +27,8 @@ class Model:
 
         self.level_to_idx = {key: {val: idx for idx, val in enumerate(vals)} for key, vals in self.cmpts_def.items()}
 
-        self.cmpts_lookup = {t: i for i, t in enumerate(product(*self.cmpts_def.values()))}
+        self.index_to_cmpt = {i: t for i, t in enumerate(product(*self.cmpts_def.values()))}
+        self.cmpt_to_index = {t: i for i, t in self.index_to_cmpt.items()}
 
         self.cmpts_shape = tuple(len(v) for v in self.cmpts_def.values())
 
@@ -57,20 +37,39 @@ class Model:
         self.start_date = dt.datetime.strptime("2020-01-01","%Y-%m-%d").date()
         self.end_date = dt.datetime.strptime("2023-06-01","%Y-%m-%d").date()
 
+        self.params = None
         self.param_t = None
         self.param_v = None
         self.param_row_idx = None
 
+        self.mults = None
         self.mults_t = None
         self.mults_v = None
         self.mults_row_idx = None
 
+        self.scales_v = None
+        self.scales_row_idx = None
+
         self.flows = []
         self.flow_idcs = []
-        self.n_flows = 0
+        #self.n_flows = 0
+        #self.flows_lookup = {}
+        self.params_args = None
+        self.mults_args = None
+        self.scales_select = None
 
-        self.scale = []
-        self.scale_idcs = []
+        self.param_lookup = {}
+        self.mult_lookup = {}
+
+        self.solver = tfp.math.ode.DormandPrince()
+
+    @property
+    def date_range(self):
+        return np.arange(self.date_to_t(self.start_date),self.date_to_t(self.end_date)+1)
+
+    @property
+    def len_t(self):
+        return self.date_to_t(self.end_date) - self.date_to_t(self.start_date) + 1
 
     @property
     def n_cmpts(self):
@@ -87,7 +86,8 @@ class Model:
         return fmt_str
 
     def cmpt_to_idx(self, cmpt):
-        return np.squeeze(np.ravel_multi_index([[lvl_dict[elem]] for elem,lvl_dict in zip(cmpt,self.level_to_idx.values())],dims=self.cmpts_shape)).item()
+        #return np.squeeze(np.ravel_multi_index([[lvl_dict[elem]] for elem,lvl_dict in zip(cmpt,self.level_to_idx.values())],dims=self.cmpts_shape)).item()
+        return self.cmpt_to_index[cmpt]
 
     def date_to_t(self, date):
         """Convert a date (string or date object) to t, number of days since model start date.
@@ -151,14 +151,14 @@ class Model:
         return tf.constant(val,dtype=tf.float32)
 
     @staticmethod
-    def get_tf_func(expr):
+    def get_tf_func(expr, args):
         if not expr.free_symbols:
             return Model.get_tf_constant(float(expr))
-        args = [str(a) for a in expr.free_symbols]
+        #args = [str(a) for a in expr.free_symbols]
         return sympy.lambdify(args=args, expr=expr, modules="tensorflow")
 
     def build_ode_flows(self):
-        self.graph.add_nodes_from(self.cmpts_lookup.keys())
+        self.graph.add_nodes_from(self.cmpt_to_index.keys())
         # Vaccination
         self.add_flow(from_cmpts={"seir": ["S", "E", "A"], "vacc": "none"},
                       to_cmpts={"vacc": "shot1", "immun": "medium"},
@@ -186,23 +186,23 @@ class Model:
                 continue
             self.add_flow(from_cmpts={'seir': 'S'},
                           to_cmpts={'seir': 'E', 'variant': variant},
-                          to_node_coef='lamb * betta',
+                          to_node_coef='(1-TC) * lamb * betta',
                           from_node_coef=f'(1 - immunity) * kappa / region_pop',
                           scale_cmpts={'seir': 'I', 'variant': variant})
             self.add_flow(from_cmpts={'seir': 'S'},
                           to_cmpts={'seir': 'E', 'variant': variant},
-                          to_node_coef='betta',
+                          to_node_coef='(1-TC) * betta',
                           from_node_coef=f'(1 - immunity) * kappa / region_pop',
                           scale_cmpts={'seir': 'A', 'variant': variant})
             self.add_flow(from_cmpts={'seir': 'S'},
                           to_cmpts={'seir': 'E', 'variant': variant},
-                          to_node_coef="lamb * betta",
+                          to_node_coef="(1-TC) * lamb * betta",
                           from_node_coef=f'immunity * kappa / region_pop',
                           edge_coef='immune_escape',
                           scale_cmpts={'seir': 'I', 'variant': variant})
             self.add_flow(from_cmpts={'seir': 'S'},
                           to_cmpts={'seir': 'E', 'variant': variant},
-                          to_node_coef="betta",
+                          to_node_coef="(1-TC) * betta",
                           from_node_coef=f'immunity * kappa / region_pop',
                           edge_coef='immune_escape',
                           scale_cmpts={'seir': 'A', 'variant': variant})
@@ -275,34 +275,19 @@ class Model:
             self.add_flow(from_cmpts={"seir": seir, "immun": "medium"},
                           to_cmpts={"immun": "low"},
                           to_node_coef="1 / imm_decay_medium_low")
-
+        # Seeding
+        for variant in self.cmpts_def["variant"]:
+            if variant == "none":
+                continue
+            self.add_flow(from_cmpts={"seir": "S",
+                                      "age":"18-64",
+                                      "variant": "none",
+                                      "immun": "low",
+                                      "vacc": "none"},
+                          to_cmpts={"seir": "I", "variant": variant},
+                          from_node_coef=f"{variant}_seed")
         print("All flows built.")
 
-    def load_parameters_test(self, params):
-        p_vals = []
-        p_rows = []
-        p_cols_t = []
-        idx = 0
-        for param in params:
-            if ("from_attrs" in param or "attrs" in param):
-                if "vals" in param:
-                    # Node attribute
-                    if "attrs" in param:
-                        param_nodes = ["all"] if param["attrs"] is None else self.get_ids(**param["attrs"])
-                        param_vals = param["vals"]
-                        param_row = [idx] * len(param_vals.keys())
-                        param_ts = [self.date_to_t(d) for d in param_vals.keys()]
-                        param_v = [v for v in param_vals.values()]
-                elif "mults" in param:
-                    pass
-                # Add to arrays
-                p_rows.extend(param_row)
-                p_cols_t.extend(param_ts)
-                p_vals.extend(param_v)
-            idx += 1
-        ragged_t = tf.RaggedTensor.from_value_rowids(p_cols_t, p_rows)
-        ragged_v = tf.RaggedTensor.from_value_rowids(p_vals, p_rows)
-        return params
 
     def load_parameters(self, params):
         # Ragged Tensor for Parameters
@@ -334,7 +319,9 @@ class Model:
                 if "from_attrs" in param:
                     from_attrs = param["from_attrs"]
                     to_attrs = param["to_attrs"]
-
+                    param_name_suffix = ("all" if from_attrs is None else "_".join([k+"_"+"_".join(v) for k,v in from_attrs.items()])) +\
+                                        "_" + \
+                                        ("all" if to_attrs is None else "_".join([k+"_"+"_".join(v) for k,v in to_attrs.items()]))
                     from_nodes = ["all"] if from_attrs is None else [tuple(k.values()) for k in self.get_ids(**from_attrs)]
 
                     for from_node in from_nodes:
@@ -356,6 +343,7 @@ class Model:
                                 #self.graph[from_node][to_node].update({param_name: tvp})
                 elif "attrs" in param:
                     attrs = param["attrs"]
+                    param_name_suffix = "all" if attrs is None else "_".join([k+"_"+"_".join(v) for k,v in attrs.items()])
                     nodes = ["all"] if attrs is None else [tuple(k.values()) for k in self.get_ids(**attrs)]
                     #tvp = TimeVaryingParameter(indices=param_idx, values=param_v)
                     for node in nodes:
@@ -365,6 +353,7 @@ class Model:
                         node_dict["params"].update({param_name: p_i})
                 else:
                     raise RuntimeError(f"Parameter {param_name} must have either 'from_attrs'/'to_attrs' keys or an 'attrs' key!")
+                self.param_lookup[f"{param_name}_{param_name_suffix}"] = p_i
                 p_i += 1
             elif "mults" in param:
                 param_mults = param["mults"]
@@ -380,6 +369,9 @@ class Model:
                 if "from_attrs" in param:
                     from_attrs = param["from_attrs"]
                     to_attrs = param["to_attrs"]
+                    param_name_suffix = ("all" if from_attrs is None else "_".join([k+"_"+"_".join(v) for k,v in from_attrs.items()])) + \
+                                        "_" + \
+                                        ("all" if to_attrs is None else "_".join([k+"_"+"_".join(v) for k,v in to_attrs.items()]))
 
                     from_nodes = ["all"] if from_attrs is None else [tuple(k.values()) for k in self.get_ids(**from_attrs)]
                     for from_node in from_nodes:
@@ -399,12 +391,16 @@ class Model:
                                 self.graph.add_edge(from_node, to_node, **{"params": {param_name: m_i}})
                 elif "attrs" in param:
                     attrs = param["attrs"]
+                    param_name_suffix = "all" if attrs is None else "_".join([k+"_"+"_".join(v) for k,v in attrs.items()])
                     nodes = ["all"] if attrs is None else [tuple(k.values()) for k in self.get_ids(**attrs)]
                     for node in nodes:
                         node_dict = self.graph.nodes[node]
                         if "mults" not in node_dict:
                             node_dict["mults"] = {}
                         node_dict["mults"].update({param_name: m_i})
+                else:
+                    raise RuntimeError(f"Multiplier {param_name} must have either 'from_attrs'/'to_attrs' keys or an 'attrs' key!")
+                self.mult_lookup[f"{param_name}_{param_name_suffix}"] = m_i
                 m_i += 1
             else:
                 raise RuntimeError(f"Parameter {param_name} must have either a 'vals' or 'mults' key!")
@@ -427,12 +423,15 @@ class Model:
         tf.debugging.assert_non_negative(idcs)
         return tf.gather_nd(self.mults_v, idcs)
 
-    def create_tf_funcs(self):
+
+    def create_tf_funcs_2(self):
         i = 0
         f = []
-        s = []
-        s_i = []
+        f_lookup = {}
         n_edges = self.graph.number_of_edges()
+        # Create two symbolic matrices, which we can replace the individual parameter names with.
+        param_matrix = sympy.MatrixSymbol("P",self.param_v.shape[0],1)
+        mult_matrix = sympy.MatrixSymbol("M",self.mults_v.shape[0],1)
         for from_node, to_node, edge_idx, edge_dict in self.graph.edges(data=True,keys=True):
             print(f"Parsed {i:06d} of {n_edges:06d} edges...",end="\r" if i != n_edges else "\n")
             if "flow" in edge_dict:
@@ -448,27 +447,85 @@ class Model:
                 all_expr_vars.update(self.get_expr_vars(expr=coefs["to_coef"],node=to_node))
                 all_expr_vars.update(self.get_expr_vars(expr=coefs["edge_coef"],edge_d=edge_dict))
 
-                tf_func = self.get_tf_func(coefs["from_coef"] * coefs["to_coef"] * coefs["edge_coef"])
-                p_args,m_args = zip(*list(all_expr_vars.values()))
-                scale_idcs = [] if coefs["scale_cmpts_coef"] is None else [self.cmpt_to_idx(c) for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
+                new_expr = sympy.Mul(coefs["from_coef"],coefs["to_coef"],coefs["edge_coef"],evaluate=False)
+                mod_expr = new_expr.subs({k:sympy.UnevaluatedExpr(param_matrix[p_idx] * mult_matrix[m_idx]) for k,(p_idx,m_idx) in all_expr_vars.items()})
+
+                tf_func = self.get_tf_func(mod_expr, [param_matrix,mult_matrix])
+                if coefs["scale_cmpts_coef"] is not None:
+                    s_args = [self.cmpt_to_idx(c)+1 for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
+                else:
+                    s_args = [0]
                 #edge_dict["tensors"]["func"] = tf_func
                 #edge_dict["tensors"]["args"] = list(all_expr_vars.values())
                 #edge_dict["tensors"]["scale_idcs"] = None if coefs["scale_cmpts_coef"] is None else [self.cmpt_to_idx(c) for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
 
-                f.append((u, v, tf_func, p_args, m_args))
-                s_i.extend([[i,v] for v in scale_idcs])
-                s.extend([1]*len(scale_idcs))
+                f.append((u, v, tf_func, s_args))
+                f_lookup[i] = (from_node, to_node, new_expr)
                 i += 1
         self.flows = f
+        self.flows_lookup = f_lookup
         self.n_flows = tf.constant(len(f))
-        self.scale = tf.SparseTensor(indices=s_i,values=s,dense_shape=(len(f),self.n_cmpts))
+        print("\nAll edges parsed.")
 
-    def create_tf_funcs_2(self):
-        i=1
-        for node,node_params in self.graph.nodes(data=True):
-            for _, v, out_edge_idx, out_edge_dict in self.graph.out_edges(node,data=True,keys=True):
-                if "flow" not in out_edge_dict:
-                    continue
+    def create_tf_funcs(self):
+        i = 0
+        p_args_l = []
+        m_args_l = []
+        s_args_idcs = []
+        s_args_v = []
+        #self.flows.clear()
+        #self.flows_lookup.clear()
+        n_edges = self.graph.number_of_edges()
+
+        # Create two symbolic matrices, which we can replace the individual parameter names with.
+        #param_matrix = sympy.MatrixSymbol("P",self.param_v.shape[0],1)
+        #mult_matrix = sympy.MatrixSymbol("M",self.mults_v.shape[0],1)
+        tmp_exprs = []
+        for from_node, to_node, edge_idx, edge_dict in self.graph.edges(data=True,keys=True):
+            print(f"Parsed {i:06d} of {n_edges:06d} edges...",end="\r" if i != n_edges else "\n")
+            if "flow" in edge_dict:
+                u = self.cmpt_to_idx(from_node)
+                v = self.cmpt_to_idx(to_node)
+                # This edge has a flow
+                all_expr_vars = {}
+                coefs = edge_dict["flow"]
+
+                edge_dict["tensors"] = {}
+
+                all_expr_vars.update(self.get_expr_vars(expr=coefs["from_coef"],node=from_node))
+                all_expr_vars.update(self.get_expr_vars(expr=coefs["to_coef"],node=to_node))
+                all_expr_vars.update(self.get_expr_vars(expr=coefs["edge_coef"],edge_d=edge_dict))
+
+                new_expr = sympy.Mul(coefs["from_coef"],coefs["to_coef"],coefs["edge_coef"],evaluate=False)
+                #mod_expr = new_expr.subs({k:sympy.UnevaluatedExpr(param_matrix[p_idx] * mult_matrix[m_idx]) for k,(p_idx,m_idx) in all_expr_vars.items()})
+
+                #arg_names = [str(x) for x in all_expr_vars.keys()]
+                #tf_func = self.get_tf_func(mod_expr, [param_matrix,mult_matrix])
+                tmp_exprs.append(new_expr)
+                p_args,m_args = zip(*list(all_expr_vars.values()))
+                if coefs["scale_cmpts_coef"] is not None:
+                    s_args = [self.cmpt_to_idx(c)+1 for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
+                else:
+                    s_args = [0]
+                s_args_sparse_idx = [[i,c] for c in s_args]
+                #edge_dict["tensors"]["func"] = tf_func
+                #edge_dict["tensors"]["args"] = list(all_expr_vars.values())
+                #edge_dict["tensors"]["scale_idcs"] = None if coefs["scale_cmpts_coef"] is None else [self.cmpt_to_idx(c) for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
+                self.flows.append((u,v,tf_func))
+                p_args_l.append(p_args)
+                m_args_l.append(m_args)
+                s_args_idcs.extend(s_args_sparse_idx)
+                s_args_v.extend([1.0]*len(s_args_sparse_idx))
+                #self.flows.append((u, v, tf_func, p_args, m_args, s_args))
+                #self.flows_lookup[i] = (from_node, to_node, new_expr)
+                i += 1
+        #self.flows = f
+        self.params_args = tf.ragged.constant(p_args_l)
+        self.mults_args = tf.ragged.constant(m_args_l)
+        self.n_flows = tf.constant(self.params_args.nrows())
+        self.scales_select = tf.SparseTensor(indices=s_args_idcs,values=s_args_v,dense_shape=[self.n_flows,self.n_cmpts+1])
+        print("\nAll edges parsed.")
+        #self.scale = tf.SparseTensor(indices=s_i,values=s,dense_shape=(len(f),self.n_cmpts))
 
     def get_expr_vars(self, expr, node=None, edge_d=None):
         expr_vars = {}
@@ -508,22 +565,91 @@ class Model:
 
         return expr_vars
 
-    def get_flow_matrix(self, t):
+    def build_flow_matrix(self, t, y):
         idcs = []
         vals = []
-        params_t = self.params_at_t(t)
-        mults_t = self.mults_at_t(t)
-        for from_idx, to_idx, func, p_args, m_args in self.flows:
-            params = tf.gather(params_t,p_args)
+        int_t = tf.cast(t, tf.int32)
+        params_t = self.params_at_t(int_t)
+        mults_t = self.mults_at_t(int_t)
+        y_scales = tf.concat([tf.constant([1.0]),y],0)
+
+        for from_idx, to_idx, func, p_args, m_args, s_args in self.flows:
+            params = tf.gather(params_t, p_args)
             mults = tf.gather(mults_t, m_args)
             params_mults = tf.multiply(params,mults)
-            val = func(*tf.unstack(params_mults))
+            val = tf.multiply(func(*tf.unstack(params_mults)),tf.reduce_sum(tf.gather(y_scales,s_args)))
+            #val = func(*tf.unstack(params_mults))
             vals.extend([-val,val])
             idcs.extend([(from_idx,from_idx),(to_idx,from_idx)])
         return tf.scatter_nd(idcs,vals,[self.n_cmpts]*2)
 
+    def setup_params(self):
+        p,m = self.build_params_mults_t_matrix()
+        self.params = p
+        self.mults = m
+
     @tf.function
-    def ode_with_matmul(self, t, y):
+    def build_params_mults_t_matrix(self):
+        i_c = tf.constant(0)
+        param_arr = tf.TensorArray(dtype=tf.float32,size=self.len_t)
+        mult_arr = tf.TensorArray(dtype=tf.float32,size=self.len_t)
+
+        def cond(i, _, __):
+            return tf.less(i, self.len_t)
+
+        def body(i, p_arr, m_arr):
+            p_arr = p_arr.write(i,self.params_at_t(i))
+            m_arr = m_arr.write(i,self.mults_at_t(i))
+            return i+1, p_arr, m_arr
+        #cond = lambda i, _, __ : tf.less(i,self.len_t)
+        #body = lambda i, p_arr, m_arr: (i+1,p_arr.write(i,self.params_at_t(i)),m_arr.write(i,self.mults_at_t(i)))
+        _, param_arr, mult_arr = tf.while_loop(cond=cond,body=body,loop_vars=[i_c,param_arr,mult_arr])
+        return param_arr.stack(), mult_arr.stack()
+
+    def get_flow_matrix(self, t, y, params, mults):
+        idcs = []
+        vals = []
+        int_t = tf.cast(t, tf.int32)
+        #params_t = self.params_at_t(int_t)
+        #mults_t = self.mults_at_t(int_t)
+        #params_t = tf.gather(params[int_t],self.params_args)
+        #mults_t = tf.gather(mults[int_t],self.mults_args)
+        #params_mults_t = params_t * mults_t
+        params_t = tf.expand_dims(params[int_t],axis=1)
+        mults_t = tf.expand_dims(mults[int_t],axis=1)
+        y_scales = tf.expand_dims(tf.concat([tf.constant([1.0]),y],0),axis=1)
+        y_scale_mat = tf.sparse.sparse_dense_matmul(self.scales_select,y_scales)
+        for i,(from_idx, to_idx, func) in enumerate(self.flows):
+            #params = tf.gather(params_t, p_args)
+            #mults = tf.gather(mults_t, m_args)
+            #params_mults = tf.multiply(params,mults)
+            val = func(params_t,mults_t)
+            #val = func(*tf.unstack(params_mults))
+            vals.extend([-val,val])
+            idcs.extend([(from_idx,from_idx),(to_idx,from_idx)])
+
+        flow_vals = tf.squeeze(tf.multiply(vals,tf.repeat(y_scale_mat,2)))
+        return tf.scatter_nd(idcs,flow_vals,[self.n_cmpts]*2)
+
+
+    def get_flow_matrix_2(self,t, y, params, mults):
+        int_t = tf.cast(t, tf.int32)
+        # Get params at time T
+        params_t = tf.gather(params[int_t],self.params_args)
+        # Get mults at time T
+        mults_t = tf.gather(mults[int_t],self.mults_args)
+        # Append a constant 1 as the first element of the state vector to handle flows that don't scale by anything
+        y_scales = tf.concat([tf.constant([1.0]),y],0)
+
+        # Replace with matmul
+        scales_t = tf.sparse.sparse_dense_matmul(self.mults_select,y_scales)
+        #scales_t = tf.gather()
+
+        y_scales = tf.concat([tf.constant([1.0]),y],axis=0)
+
+
+    @tf.function
+    def ode_with_matmul(self, t, y, params, mults):
         """
         :param t: Tensor representing the time T at which to compute dy.
         :param y: Tensor representing the state vector at time T.
@@ -533,24 +659,57 @@ class Model:
         :param mults_t: RaggedTensor representing the times T where each multiplier changes.
         :return: a Tensor representing the dy at time T.
         """
-        flow_matrix = self.get_flow_matrix(t)
-        return tf.matmul(flow_matrix,tf.expand_dims(y,axis=1))
+        print("ODE function was retraced.")
+        tf.print(t)
+        #flow_matrix = self.build_flow_matrix(t, y)
+        flow_matrix = self.get_flow_matrix(t, y, params, mults)
+        #tf.print(flow_matrix)
+        #output_vec = tf.squeeze(tf.sparse.sparse_dense_matmul(flow_matrix,tf.expand_dims(y,axis=1)),axis=1)
+        output_vec = tf.linalg.matvec(flow_matrix,y)
+        #return tf.debugging.check_numerics(output_vec,"output has NaN")
+        return output_vec
 
-    @tf.function
-    def ode(self, t, y):
-        dy = list([0]*len(y))
-        params_t = self.params_at_t(t)
-        mults_t = self.mults_at_t(t)
-        for from_idx, to_idx, func, p_args, m_args in self.flows:
-            params = tf.gather(params_t, p_args)
-            mults = tf.gather(mults_t, m_args)
-            params_mults = tf.multiply(params,mults)
-            func_val = func(*tf.unstack(params_mults))
+    # @tf.function
+    # def ode(self, t, y):
+    #     dy = list([0]*len(y))
+    #     int_t = tf.cast(t, tf.int32)
+    #     params_t = self.params_at_t(int_t)
+    #     mults_t = self.mults_at_t(int_t)
+    #     y_scales = tf.concat([tf.constant([1.0]),y],0)
+    #     for from_idx, to_idx, func, p_args, m_args, s_args in self.flows:
+    #         params = tf.gather(params_t, p_args)
+    #         mults = tf.gather(mults_t, m_args)
+    #         params_mults = tf.multiply(params,mults)
+    #         func_val = func(*tf.unstack(params_mults)) * tf.reduce_sum(tf.gather(y_scales,s_args))
+    #
+    #         dy[from_idx] -= func_val * y[from_idx]
+    #         dy[to_idx] += func_val * y[from_idx]
+    #     return dy
 
-            dy[from_idx] -= func_val * y[from_idx]
-            dy[to_idx] += func_val * y[from_idx]
-        return dy
+    def ode_scipy_helper(self, t, y):
+        tf_t = tf.constant(t,dtype=tf.float32)
+        tf_y = tf.constant(y,dtype=tf.float32)
+        return self.ode_with_matmul(tf_t, tf_y, self.params, self.mults).numpy()
 
+
+    def solve_ode(self,times, y0):
+        solution = spi.solve_ivp(
+            fun=self.ode_scipy_helper,
+            t_span=[min(times), max(times)],
+            y0=y0,
+            t_eval=times,
+            method="RK45",
+            #max_step=1.0
+        )
+        return solution
+
+    def get_y0(self):
+        y0 = np.zeros(shape=self.n_cmpts,dtype=np.float32)
+        y0_idcs = self.get_ids(**{"seir":"S","vacc":"none","immun":"low","variant":"none"})
+        ages = {self.cmpt_to_idx(tuple(d.values())): tf.gather(self.param_v,self.graph.nodes[tuple(d.values())]["params"]["region_age_pop"]).numpy().squeeze().item() for d in y0_idcs}
+        for k,v in ages.items():
+            y0[k] = v
+        return tf.constant(y0,dtype=tf.float32)
 
 if __name__ == "__main__":
     start_date = dt.datetime.strptime("2020-01-01","%Y-%m-%d").date()
@@ -559,34 +718,83 @@ if __name__ == "__main__":
 
     model_parameters = ModelParameters(start_date=start_date, end_date=end_date, region=region)
     model_parameters.load_all_params()
+
     # hosp_data = get_hosps()
     model = Model()
+
     model.build_ode_flows()
     model.load_parameters(params=model_parameters.params)
+    model.setup_params()
+
     model.create_tf_funcs()
+    solve_times = tf.range(model.date_to_t(model.start_date),model.date_to_t(model.end_date)+1,dtype=tf.float32)
+    y0 = model.get_y0()
+
+    #test = model.build_flow_matrix(tf.constant(431.256042),tf.ones(2430))
+    #solve_times = tf.constant(np.arange(model.date_to_t(model.start_date),model.date_to_t(model.end_date)+1))
+    #model.ode_with_matmul(tf.constant(0.0),tf.constant(model.get_y0()))
+    print("solving ODE...")
+
+    # logdir = "tf_model/log"
+    # writer = tf.summary.create_file_writer(logdir)
+    # tf.summary.trace_on(graph=True, profiler=True)
+
+    for k in range(1000):
+        start_t = time.perf_counter()
+        model.solve_ode(solve_times,y0)
+        #model.ode_with_matmul(tf.constant(float(i)), y0)
+        #model.ode_with_matmul(tf.constant(float(i)),y0,params,mults)
+        #model.solve_ode(solve_times,y0)
+        #result = model.build_params_mults_t_matrix()
+        end_t = time.perf_counter() - start_t
+        print(f"Solved ODE in {end_t:0.3f} seconds.")
+    # with writer.as_default():
+    #     tf.summary.trace_export(
+    #         name="ode_func_trace",
+    #         step=0,
+    #         profiler_outdir=logdir)
+    # exit(0)
+    #sol = model.solve_ode(solve_times,y0=y0)
+
+    with open("tf_model/solution.pkl","wb") as f:
+        solution_y = sol.y.T
+        solution_ydf = pd.DataFrame(data=solution_y,
+                                    index=pd.date_range(start=model.start_date,end=model.end_date),
+                                    columns=pd.MultiIndex.from_tuples([model.index_to_cmpt[i] for i in range(model.n_cmpts)]))
+        pickle.dump(solution_ydf,f)
+    with writer.as_default():
+        tf.summary.trace_export(
+            name="ode_func_trace",
+            step=0,
+            profiler_outdir=logdir)
+    print("Here!")
+    # for i in range(100):
+    #     s_t = time.perf_counter()
+    #     solution = model.solve_ode(times=solve_times, y0=y0)
+    #     elapsed_t = time.perf_counter() - s_t
+    #     print(f"Solved ODE in {elapsed_t:0.3f} seconds.")
     #logdir = "tf_model/log"
     #writer = tf.summary.create_file_writer(logdir)
     #tf.summary.trace_on(graph=True, profiler=True)
-
-    # Test Matmul version
-    elapsed_matmul = []
-    for i in range(1000):
-        s_t = time.perf_counter()
-        t0 = model.ode_with_matmul(tf.constant(i), tf.zeros(shape=np.prod(model.cmpts_shape)))
-        #t1 = model.ode(tf.constant(i), tf.zeros(shape=np.prod(model.cmpts_shape)))
-        elapsed = time.perf_counter() - s_t
-        print(f"Finished in {elapsed:03f} seconds.")
-        elapsed_matmul.append(elapsed)
-    print(f"Matmul version Median: {np.median(elapsed_matmul):03f}s Std: +/-{np.std(elapsed_matmul):03f}s")
-    # Non-matmul version
-    elapsed_nmm = []
-    for i in range(1000):
-        s_t = time.perf_counter()
-        t0 = model.ode(tf.constant(i), tf.zeros(shape=np.prod(model.cmpts_shape)))
-        elapsed_n = time.perf_counter() - s_t
-        print(f"Finished in {elapsed_n:03f} seconds.")
-        elapsed_nmm.append(elapsed_n)
-    print(f"Non-matmul version Median: {np.median(elapsed_nmm):03f}s Std: +/-{np.std(elapsed_nmm):03f}s")
+    # # Test Matmul version
+    # elapsed_matmul = []
+    # for i in range(1000):
+    #     s_t = time.perf_counter()
+    #     t0 = model.ode_with_matmul(tf.constant(i), tf.zeros(shape=np.prod(model.cmpts_shape)))
+    #     #t1 = model.ode(tf.constant(i), tf.zeros(shape=np.prod(model.cmpts_shape)))
+    #     elapsed = time.perf_counter() - s_t
+    #     print(f"Finished in {elapsed:03f} seconds.")
+    #     elapsed_matmul.append(elapsed)
+    # print(f"Matmul version Median: {np.median(elapsed_matmul):03f}s Std: +/-{np.std(elapsed_matmul):03f}s")
+    # # Non-matmul version
+    # elapsed_nmm = []
+    # for i in range(1000):
+    #     s_t = time.perf_counter()
+    #     t0 = model.ode(tf.constant(i), tf.zeros(shape=np.prod(model.cmpts_shape)))
+    #     elapsed_n = time.perf_counter() - s_t
+    #     print(f"Finished in {elapsed_n:03f} seconds.")
+    #     elapsed_nmm.append(elapsed_n)
+    # print(f"Non-matmul version Median: {np.median(elapsed_nmm):03f}s Std: +/-{np.std(elapsed_nmm):03f}s")
     # with writer.as_default():
     #     tf.summary.trace_export(
     #         name="ode_func_trace",

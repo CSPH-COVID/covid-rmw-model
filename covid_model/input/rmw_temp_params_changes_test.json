@@ -357,7 +357,7 @@
       "immun": "medium"
     },
     "vals": {
-      "2020-01-01": 0.5
+      "2020-01-01": 0.8
     },
     "desc": "80% immunity, conferred by a single vaccine (does not decay to none)"
   },
@@ -367,7 +367,7 @@
       "immun": "low"
     },
     "vals": {
-      "2020-01-01": 0
+      "2020-01-01": 0.0
     },
     "desc": "0% immunity, which happens if vaccines fail, or someone is unvaccinated and never had a natural infection"
   },

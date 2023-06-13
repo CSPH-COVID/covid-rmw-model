@@ -67,7 +67,19 @@ class ModelParameters:
         # Vaccination Data
         self.load_and_compute_vacc_data(engine=engine)
 
+        # TC data
+        self.load_tc_params()
+
         print("All parameters loaded.")
+
+    def load_tc_params(self, filename="tf_model/tc_temp.json"):
+        with open(filename,"r") as f:
+            tc_file = json.load(f)
+        temp_vals = {self.t_to_date(int(t)).strftime("%Y-%m-%d"): d["con"] for t, d in tc_file.items()}
+        param = {"param": "TC",
+                 "attrs": None,
+                 "vals": {"2020-01-01": 1.0}}
+        self.params.append(param)
 
     def load_vacc_proj_params(self):
         # Clear old params
