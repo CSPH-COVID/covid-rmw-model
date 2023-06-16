@@ -218,6 +218,9 @@ def do_single_fit(tc_0=0.75,
             model.write_specs_to_db(engine)
             logger.info(f'{str(model.tags)}: spec_id: {model.spec_id}')
 
+        # Solve the model from the start until present to fix issue with TC window overlap.
+        model.solve_seir(tstart=model.tstart, tend=tend)
+
         # simulate the model and save a picture of the output
         forward_sim_plot(model)
 

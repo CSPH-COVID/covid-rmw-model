@@ -1603,6 +1603,8 @@ class RMWCovidModel:
                 self.set_from_to_compartment_param(**param_def)
             else:
                 self.set_compartment_param(**param_def)
+        # Add 't' parameter to the params_by_t
+        self.params_by_t["all"]["t"] = SortedDict({i: i for i in self.trange})
 
         # determine all times when params change
         self.params_trange = sorted(list(set.union(*[set(param.keys()) for param_key in self.params_by_t.values() for param in param_key.values()])))
@@ -1936,7 +1938,6 @@ class RMWCovidModel:
                 continue
             # No mobility between regions (or a single region)
             if self.mobility_mode is None or self.mobility_mode == "none":
-                day_of_year =
                 for region in self.attrs['region']:
                     # Seasonality test changes
                     self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb * betta * (1 + beta1 * cos(2*pi*t/365))', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region})
