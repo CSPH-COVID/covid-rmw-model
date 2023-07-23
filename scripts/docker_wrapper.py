@@ -73,23 +73,60 @@ def wrapper_run(args: dict):
         #'tc_batch_increment': 2
         #'base_spec_id': 5115
     }
+    
+        # MODEL FITTING
+    # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
+    # a more general wrapper for doing model fitting and generating plots.
+    base_model = do_single_fit(**base_model_args)
+    #base_model = RMWCovidModel(base_spec_id=4887)
+    #base_model.prep()
+    base_model.solve_seir()
+    with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
+        pickle.dump(base_model.solution_ydf, f)
+    #base_model.solve_seir()
 
-    scenario_fit_args = {
-        'outdir': outdir,
-        'start_date': args["start_date"],
-        'end_date': args["end_date"],
-        'fit_start_date': scenario_fit_start_date,
-        'fit_end_date': args["scenarios_fit_end_date"],
-        'model_class': RMWCovidModel,
-        'write_results': False,
-        'pickle_matrices': False,
-        'pre_solve_model': True
-    }
+    # MODEL OUTPUTS
+    logging.info('Projecting')
+    do_create_report(base_model, outdir=outdir, prep_model=False, solve_model=False,
+                     immun_variants=args["report_variants"],
+                     from_date=args["report_start_date"])
+    base_model.solution_sum_df(['seir', 'variant', 'immun']).unstack().to_csv(
+        get_filepath_prefix(outdir, tags=base_model.tags) + 'seir_variant_immun_total_all_at_once_projection.csv')
+    base_model.solution_sum_df().unstack().to_csv(
+        get_filepath_prefix(outdir, tags=base_model.tags) + 'full_projection.csv')
+    base_model.solution_sum_df(['seir', 'variant']).unstack().to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + 'seir_by_variant.csv')
+    xmin = datetime.datetime.strptime(args["start_date"], "%Y-%m-%d").date()
+    xmax = datetime.datetime.strptime(args["end_date"], "%Y-%m-%d").date()
+    fig = plt.figure(figsize=(10, 10), dpi=300)
+    ax = fig.add_subplot(211)
+    hosps_df = base_model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
+    hosps_df.plot(ax=ax)
+    ax.set_xlim(xmin, xmax)
+    ax = fig.add_subplot(212)
+    plot_transmission_control(base_model, ax=ax)
+    ax.set_xlim(xmin, xmax)
+    plt.savefig(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.png')
+    plt.close()
+    hosps_df.to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.csv')
+    json.dump(base_model.tc, open(get_filepath_prefix(outdir, tags=base_model.tags) + 'model_forecast_tc.json', 'w'))
+    
+    exit(0)
+    #scenario_fit_args = {
+        #'outdir': outdir,
+        #'start_date': args["start_date"],
+        #'end_date': args["end_date"],
+        #'fit_start_date': scenario_fit_start_date,
+        #'fit_end_date': args["scenarios_fit_end_date"],
+        #'model_class': RMWCovidModel,
+        #'write_results': False,
+        #'pickle_matrices': False,
+        #'pre_solve_model': True
+    #}
     # Set up the arguments for the scenario fits.
     scenario_model_args = []
     # SET SPEC IDs
     # Number of fits is the number of scenarios plus the base model fit
-    n_fits = len(scenario_model_args) + 1
+    #n_fits = len(scenario_model_args) + 1
     spec_ids = [START_SPEC_ID + (BATCH_TASK_INDEX * n_fits) + i for i in range(n_fits)]
     base_model_args["spec_id"] = spec_ids[0]
     for scen, spec_id in zip(scenario_model_args, spec_ids[1:]):

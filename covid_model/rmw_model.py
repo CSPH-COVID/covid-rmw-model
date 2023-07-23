@@ -1673,6 +1673,7 @@ class RMWCovidModel:
                 self.set_from_to_compartment_param(**param_def)
             else:
                 self.set_compartment_param(**param_def)
+                
         # Add a 't' parameter to the dictionary
         self.params_by_t["all"]["t"] = SortedDict({i: i for i in self.trange})
 
