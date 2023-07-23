@@ -1714,7 +1714,7 @@ class RMWCovidModel:
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
         # Build lookup for variant seeds, offset values and scaling values
         # REMOVE THIS
-        offsets_hardcoded = pd.read_csv("/opt/project/covid_model/input/seeds_offsets_scales_final_maybe.csv", index_col=0)
+        offsets_hardcoded = pd.read_csv("/covid_rmw_model/covid_model/input/seeds_offsets_scales_final_maybe.csv", index_col=0)
         self.__seed_offsets = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_offsets"])}
         self.__seed_scalers = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_scales"])}
 
