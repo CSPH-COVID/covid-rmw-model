@@ -49,23 +49,26 @@
   },
   {
     "param": "pS",
-    "attrs": null,
-    "vals": {
-      "2020-01-01": 0.8523
+    "attrs": {
+      "immun": [
+        "low"
+      ]
     },
-    "desc": "11% of infections among 0-17 are symptomatic"
+    "vals": {
+      "2020-01-01": 0.573
+    },
+    "desc": "Omicrons have a 16.4% lower proportion of symptomatic infections for those with no or weak immunity compared to Delta"
   },
   {
     "param": "pS",
     "attrs": {
-      "vacc": [
-        "shot2",
-        "booster1",
-        "booster23"
+      "immun": [
+        "medium",
+        "high"
       ]
     },
-    "mults": {
-      "2020-01-01": 0.92
+    "vals": {
+      "2020-01-01": 0.431
     },
     "desc": "Omicrons have a 16.4% lower proportion of symptomatic infections for those with no or weak immunity compared to Delta"
   },
@@ -492,7 +495,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.30
+      "2020-01-01": 0.58
     }
   },
   {
@@ -517,7 +520,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.34
+      "2020-01-01": 0.60
     }
   },
   {
@@ -543,7 +546,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.34
+      "2020-01-01": 0.60
     }
   },
   {
@@ -570,7 +573,7 @@
       ]
     },
     "vals": {
-      "2020-01-01": 0.36
+      "2020-01-01": 0.95
     }
   },
   {

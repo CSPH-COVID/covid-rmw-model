@@ -114,15 +114,22 @@ class ExternalVariantProportions(ExternalData):
     """Class to retrieve external variant proportion data from the database. Used to align variant proportions.
 
     """
-    def fetch_from_db(self,) -> pd.DataFrame:
-        with open("covid_model/input/test_variant_props.pkl","rb") as f:
-            raw_df = pickle.load(f)
-            raw_df.set_index(pd.date_range(start="2020-01-24",periods=len(raw_df),freq="D"),inplace=True)
-        inf_df = raw_df["I"].groupby("variant",axis=1).sum()
-        prop_df = inf_df.divide(inf_df.sum(axis=1),axis="index")
-        prop_df.loc["2020-01-24", "wildtype"] = 1.0
-        prop_df.fillna(0,inplace=True)
-        return prop_df
+    def fetch_from_db(self, region_id) -> pd.DataFrame:
+        # with open("covid_model/input/test_variant_props.pkl","rb") as f:
+        #     raw_df = pickle.load(f)
+        #     raw_df.set_index(pd.date_range(start="2020-01-24",periods=len(raw_df),freq="D"),inplace=True)
+        # inf_df = raw_df["I"].groupby("variant",axis=1).sum()
+        # prop_df = inf_df.divide(inf_df.sum(axis=1),axis="index")
+        # prop_df.loc["2020-01-24", "wildtype"] = 1.0
+        # prop_df.fillna(0,inplace=True)
+        sql = open("covid_model/sql/variant_proportions.sql","r").read()
+        raw_df = pd.read_sql(sql=sql,
+                             con=self.engine,
+                             index_col=["date"],
+                             parse_dates=["date"],
+                             params={"region_id": region_id}).drop(columns=["state"])
+        raw_df["none"] = 0.0
+        return raw_df
 
 
 class ExternalHospsEMR(ExternalData):

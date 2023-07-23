@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 from scipy import optimize as spo
 from matplotlib import pyplot as plt
-from matplotlib.cm import tab20
+from matplotlib.cm import tab20b, tab20c, tab20
 from matplotlib.patches import Rectangle
 import matplotlib.ticker as mtick
 """ Local Imports """
@@ -200,15 +200,15 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
 
         """
         # Extract parameters
-        test_tc = params[:-n_relevant_variants]
-        #var_seed_offsets = params[len(test_tc):-n_relevant_variants]
-        var_seed_scalers = params[len(test_tc):]
+        test_tc = params[:-2*n_relevant_variants]
+        var_seed_offsets = params[len(test_tc):-n_relevant_variants]
+        var_seed_scalers = params[len(test_tc)+n_relevant_variants:]
         # Convert offsets to integers
         #var_offsets_int = [int(np.round(v * voffset_max)) for v in var_seed_offsets]
         # Update offsets
-        #model.update_seed_offsets({f"{variant}_seed":offset*model.voffset_max for variant,offset in zip(relevant_variants, var_seed_offsets)})
+        model.update_seed_offsets({f"{variant}_seed": offset for variant, offset in zip(relevant_variants, var_seed_offsets)})
         # Update scaling values
-        model.update_seed_scalers({f"{variant}_seed": scaler for variant,scaler in zip(relevant_variants, var_seed_scalers)})
+        model.update_seed_scalers({f"{variant}_seed": scaler for variant, scaler in zip(relevant_variants, var_seed_scalers)})
         # Update TC
         model.update_tc(tc_list_to_dict(test_tc), replace=False, update_lookup=False)
         # Solve the model
@@ -228,14 +228,14 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
         xdata=trange,
         ydata=ydata,
         p0=[tc[t][region] for t in tc_ts for region in model.regions] +  # TC guesses
-           #([model.seed_offsets[f"{variant}_seed"]/model.voffset_max for variant in relevant_variants]) +  # Offset guesses
+           ([model.seed_offsets[f"{variant}_seed"] for variant in relevant_variants]) +  # Offset guesses
            ([model.seed_scalers[f"{variant}_seed"] for variant in relevant_variants]), # Scaler guesses
         bounds=(
             ([tc_min] * len(tc_ts) * len(regions)) +  # TC min bound
-            #([-1.0] * n_relevant_variants) +  # Offset min bound
+            ([-model.voffset_max] * n_relevant_variants) +  # Offset min bound
             ([0.0] * n_relevant_variants), # Scaler min bound
             ([tc_max] * len(tc_ts) * len(regions)) +
-            #([1.0] * n_relevant_variants) +
+            ([model.voffset_max] * n_relevant_variants) +
             ([model.soffset_max] * n_relevant_variants)
         ),
         verbose=2
@@ -407,7 +407,8 @@ def do_single_fit(tc_0=0.75,
             logger.info(f'{str(model.tags)}: Uploading batch results')
             model.write_specs_to_db(engine)
             logger.info(f'{str(model.tags)}: spec_id: {model.spec_id}')
-
+        # Solve the model up to this point (necessary if there is a TC overlap)
+        model.solve_seir(tstart=model.tstart, tend=tend)
         # simulate the model and save a picture of the output
         forward_sim_plot(model, outdir)
 
@@ -445,6 +446,80 @@ def do_single_fit(tc_0=0.75,
     #         model.update_seed_offsets({f"{variant}_seed": 0})
     return model
 
+
+def do_variant_optimization_ie(model: RMWCovidModel, outdir:str,  tc_min:float=0.0, tc_max:float=0.99, write_specs=True, **kwargs):
+    model.solve_seir()
+    model.tags["vopt"] = "pre_opt"
+    logger.info(f"{str(model.tags)} Generating pre-optimization plot for comparison...")
+    forward_sim_plot(model, outdir)
+    for v1,v2 in pairwise(model.attrs["variant"]):
+        if v1 == "none":
+            continue
+        logger.info(f"{str(model.tags)} Starting optimization process...")
+        model.tags["vopt"] = f"{v1}_{v2}"
+        start_t = perf_counter()
+        # A variant's optimization region start when seeding begins and ends when the variant's proportion of infections
+        # is close to 0
+
+        vwindow_start = int(np.clip(
+            model.seeds[model.regions[0]][f"{v1}_seed"].argmax() - model.voffset_max - 1, # Give us enough space so that we can optimize the seed backwards up to the limit.
+            model.tstart,
+            model.tend
+        ))
+        # The window ends when the variant proportion falls to 0.
+        vwindow_end = int(len(model.variant_props) - np.argmax(~np.isclose(model.variant_props[v2].values[::-1],0.0)))
+        # Clip the window end so that we do not surpass the end of hospitalizations
+        hosps_end_t = model.date_to_t(model.hosps.index.get_level_values("date").max())
+        vwindow_end = min(vwindow_end,model.tend,hosps_end_t)
+        vwindow_ydict = model.y_dict(vwindow_start) if vwindow_start != 0 else model.y0_dict
+
+        logger.info(f"{str(model.tags)}: Variant pair ({v1}, {v2}) appears between "
+                    f"{model.t_to_date(vwindow_start)} and {model.t_to_date(vwindow_end)}")
+
+        # Iterate fitting the variant seeds and fitting TC.
+        # opt_result = __optimize_variants(model=model,
+        #                                  variants=[v1,v2],
+        #                                  tstart=vwindow_start,
+        #                                  tend=vwindow_end,
+        #                                  yd_start=vwindow_ydict)
+        # model.tags["iter"] = f"{i+1}of{n_iters}"
+        # model.tags["opt"] = "post_var"
+        # forward_sim_plot(model,outdir=outdir)
+        # fitted_tc_, fitted_tc_cov = __single_batch_fit(model=model,
+        #                                               tc_min=tc_min,
+        #                                               tc_max=tc_max,
+        #                                               yd_start=vwindow_ydict,
+        #                                               tstart=vwindow_start,
+        #                                               tend=vwindow_end)
+        # model.tags["opt"] = "post_tc"
+        # forward_sim_plot(model,outdir=outdir)
+        fitted_p, fitted_p_cov = __single_batch_fit_variant_opt(model,
+                                                                tc_min=tc_min,
+                                                                tc_max=tc_max,
+                                                                relevant_variants=[v1, v2],
+                                                                yd_start=vwindow_ydict,
+                                                                tstart=vwindow_start,
+                                                                tend=vwindow_end)
+        fitted_tc = fitted_p[:-4]
+        #fitted_offset = fitted_p[-4:-2]
+        #current_offset = model.seed_offsets[f"{v1,v2}_seed"]
+        #fitted_scaler = fitted_p[-2:]
+        #current_scaler = model.seed_scalers[f"{v1,v2}_seed"]
+        elapsed_t = perf_counter() - start_t
+        for v in (v1,v2):
+            offset = model.seed_offsets[f"{v}_seed"]
+            scale = model.seed_scalers[f"{v}_seed"]
+            logger.info(f"{str(model.tags)}: '{v}'Fitted Offset: {offset}")
+            logger.info(f"{str(model.tags)}: '{v}'Fitted Seed Scale: {scale}")
+
+        logger.info(f"{str(model.tags)}: Optimized variant pair '{v1,v2}' in {elapsed_t:0.2f} seconds.")
+
+        model.solve_seir()
+        forward_sim_plot(model, outdir,highlight_range=(vwindow_start,vwindow_end))
+
+        if write_specs:
+            model.write_specs_to_db()
+    return model
 
 def do_variant_optimization(model: RMWCovidModel, outdir:str,  tc_min:float=0.0, tc_max:float=0.99, write_specs=True, **kwargs):
     model.solve_seir()
@@ -705,6 +780,32 @@ def do_create_report(model, outdir, immun_variants=('ba2121',), from_date=None, 
         ax.legend(loc='best')
         fig.savefig(get_filepath_prefix(outdir, tags=model.tags) + f'immunity_{variant}.png')
         plt.close()
+
+    # Immunity and Infections
+    colormap_l = [tab20c((4 * i) + j) for i in range(3) for j in range(3)] + \
+                 [tab20b((4 * i) + j) for i in range(5) for j in range(3)] + \
+                 [tab20c(i + 16) for i in range(3)]
+
+    df = model.solution_ydf.copy()
+    df.set_index(pd.date_range(model.start_date, periods=len(df), freq="D"),inplace=True)
+    fig, ax = plt.subplots(figsize=(20, 15), nrows=2, sharex=True)
+    group_df = df.drop(columns=["D"], level=0).groupby(["variant", "immun"], axis=1).sum()
+    group_df = group_df.reindex([x for x in group_df.columns.levels[0] if x != "none"] + ["none"], axis=1,
+                                level="variant")
+    group_df = group_df.reindex(["high", "medium", "low"], axis=1, level="immun")
+    ax[0].stackplot(group_df.index, group_df.T, labels=group_df.columns, colors=colormap_l)
+    ax[0].legend(fancybox=False, edgecolor="black", loc="upper left")
+    ax[0].set_xlim(group_df.index.min(), group_df.index.max())
+    ax[0].set_ylim(0, group_df.sum(axis=1).max())
+    ax[0].set_title("Immunity Status by Level and Variant")
+    inf_df = df["I"].groupby(["variant", "immun"], axis=1).sum()
+    inf_df = inf_df.reindex([x for x in inf_df.columns.levels[0] if x != "none"] + ["none"], axis=1, level="variant")
+    inf_df = inf_df.reindex(["high", "medium", "low"], axis=1, level="immun")
+    ax[1].stackplot(inf_df.index, inf_df.T, labels=inf_df.columns, colors=colormap_l)
+    ax[1].legend(fancybox=False, edgecolor="black", loc="upper left")
+    ax[1].set_title("Infections by Variant and Immunity Status")
+    fig.tight_layout()
+    fig.savefig(get_filepath_prefix(outdir, tags=model.tags) + "immunity_over_time.png")
 
     do_build_legacy_output_df(model).to_csv(get_filepath_prefix(outdir, tags=model.tags) + 'out2.csv')
 

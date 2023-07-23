@@ -116,7 +116,7 @@ class Model:
                 used_cmpts.append(self.cmpts_def[level])
         return [{level: value for level, value in zip(self.cmpts_def.keys(), cmpt)} for cmpt in product(*used_cmpts)]
 
-    def add_flow(self, from_cmpts: dict, to_cmpts: dict, scale_cmpts=None, from_node_coef=None, to_node_coef=None, edge_coef=None):
+    def add_flow(self, from_cmpts: dict, to_cmpts: dict, scale_cmpts=None, from_node_coef=None, to_node_coef=None, edge_expr=None):
         # All 'from' compartments which participate
         from_ids = self.get_ids(**from_cmpts)
 
@@ -130,13 +130,28 @@ class Model:
         #self.graph.add_edges_from([(tuple(u.values()),tuple(v.values())) for u,v in zip(from_ids,to_ids)])
 
         from_node_expr = sympy.parse_expr(from_node_coef if from_node_coef is not None else "1")
-        to_node_expr = sympy.parse_expr(to_node_coef if to_node_coef is not None else "1")
-        edge_coef = sympy.parse_expr(edge_coef if edge_coef is not None else "1")
+        from_node_symbols = [str(x) for x in from_node_expr.free_symbols]
 
-        data_dict = {"flow": {"from_coef": from_node_expr,
-                               "to_coef": to_node_expr,
-                               "edge_coef": edge_coef,
-                               "scale_cmpts_coef": scale_cmpts}}
+        to_node_expr = sympy.parse_expr(to_node_coef if to_node_coef is not None else "1")
+        to_node_symbols = [str(x) for x in to_node_expr.free_symbols]
+
+        edge_expr = sympy.parse_expr(edge_expr if edge_expr is not None else "1")
+        edge_expr_symbols = [str(x) for x in edge_expr.free_symbols]
+
+        comb_expr = sympy.Mul(from_node_expr, to_node_expr, edge_expr, evaluate=False)
+        comb_expr_symbols = from_node_symbols + to_node_symbols + edge_expr_symbols
+
+        tf_func = self.get_tf_func(comb_expr, comb_expr_symbols)
+        # data_dict = {"flow": {"from_coef": from_node_expr,
+        #                        "to_coef": to_node_expr,
+        #                        "edge_coef": edge_coef,
+        #                        "scale_cmpts_coef": scale_cmpts}}
+
+        data_dict = {"flow": {"func": tf_func,
+                              "from_params": from_node_symbols,
+                              "to_params": to_node_symbols,
+                              "edge_params": edge_expr_symbols,
+                              "scale_cmpts_coef": scale_cmpts}}
 
         self.graph.add_edges_from([(tuple(u.values()), tuple(v.values()), data_dict) for u, v in zip(from_ids, to_ids)])
 
@@ -198,13 +213,13 @@ class Model:
                           to_cmpts={'seir': 'E', 'variant': variant},
                           to_node_coef="(1-TC) * lamb * betta",
                           from_node_coef=f'immunity * kappa / region_pop',
-                          edge_coef='immune_escape',
+                          edge_expr='immune_escape',
                           scale_cmpts={'seir': 'I', 'variant': variant})
             self.add_flow(from_cmpts={'seir': 'S'},
                           to_cmpts={'seir': 'E', 'variant': variant},
                           to_node_coef="(1-TC) * betta",
                           from_node_coef=f'immunity * kappa / region_pop',
-                          edge_coef='immune_escape',
+                          edge_expr='immune_escape',
                           scale_cmpts={'seir': 'A', 'variant': variant})
         # Disease Progression
         self.add_flow(from_cmpts={"seir": "E"},
@@ -443,9 +458,9 @@ class Model:
 
                 edge_dict["tensors"] = {}
 
-                all_expr_vars.update(self.get_expr_vars(expr=coefs["from_coef"],node=from_node))
-                all_expr_vars.update(self.get_expr_vars(expr=coefs["to_coef"],node=to_node))
-                all_expr_vars.update(self.get_expr_vars(expr=coefs["edge_coef"],edge_d=edge_dict))
+                all_expr_vars.update(self.lookup_parameters(expr=coefs["from_coef"], node=from_node))
+                all_expr_vars.update(self.lookup_parameters(expr=coefs["to_coef"], node=to_node))
+                all_expr_vars.update(self.lookup_parameters(expr=coefs["edge_coef"], edge_d=edge_dict))
 
                 new_expr = sympy.Mul(coefs["from_coef"],coefs["to_coef"],coefs["edge_coef"],evaluate=False)
                 mod_expr = new_expr.subs({k:sympy.UnevaluatedExpr(param_matrix[p_idx] * mult_matrix[m_idx]) for k,(p_idx,m_idx) in all_expr_vars.items()})
@@ -487,37 +502,28 @@ class Model:
                 u = self.cmpt_to_idx(from_node)
                 v = self.cmpt_to_idx(to_node)
                 # This edge has a flow
-                all_expr_vars = {}
-                coefs = edge_dict["flow"]
+                d = edge_dict["flow"]
 
-                edge_dict["tensors"] = {}
+                all_params = []
+                all_params.extend(self.lookup_parameters(params=d["from_params"], node=from_node))
+                all_params.extend(self.lookup_parameters(params=d["to_params"], node=to_node))
+                all_params.extend(self.lookup_parameters(params=d["edge_params"], edge_d=edge_dict))
 
-                all_expr_vars.update(self.get_expr_vars(expr=coefs["from_coef"],node=from_node))
-                all_expr_vars.update(self.get_expr_vars(expr=coefs["to_coef"],node=to_node))
-                all_expr_vars.update(self.get_expr_vars(expr=coefs["edge_coef"],edge_d=edge_dict))
-
-                new_expr = sympy.Mul(coefs["from_coef"],coefs["to_coef"],coefs["edge_coef"],evaluate=False)
-                #mod_expr = new_expr.subs({k:sympy.UnevaluatedExpr(param_matrix[p_idx] * mult_matrix[m_idx]) for k,(p_idx,m_idx) in all_expr_vars.items()})
-
-                #arg_names = [str(x) for x in all_expr_vars.keys()]
-                #tf_func = self.get_tf_func(mod_expr, [param_matrix,mult_matrix])
-                tmp_exprs.append(new_expr)
-                p_args,m_args = zip(*list(all_expr_vars.values()))
-                if coefs["scale_cmpts_coef"] is not None:
-                    s_args = [self.cmpt_to_idx(c)+1 for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
+                if d["scale_cmpts_coef"] is not None:
+                    s_args = [self.cmpt_to_idx(c)+1 for c in [tuple(v.values()) for v in self.get_ids(**d["scale_cmpts_coef"])]]
                 else:
                     s_args = [0]
                 s_args_sparse_idx = [[i,c] for c in s_args]
-                #edge_dict["tensors"]["func"] = tf_func
-                #edge_dict["tensors"]["args"] = list(all_expr_vars.values())
-                #edge_dict["tensors"]["scale_idcs"] = None if coefs["scale_cmpts_coef"] is None else [self.cmpt_to_idx(c) for c in [tuple(v.values()) for v in self.get_ids(**coefs["scale_cmpts_coef"])]]
-                self.flows.append((u,v,tf_func))
+
+
+                p_args,m_args = zip(*all_params)
                 p_args_l.append(p_args)
                 m_args_l.append(m_args)
                 s_args_idcs.extend(s_args_sparse_idx)
                 s_args_v.extend([1.0]*len(s_args_sparse_idx))
                 #self.flows.append((u, v, tf_func, p_args, m_args, s_args))
                 #self.flows_lookup[i] = (from_node, to_node, new_expr)
+                self.flows.append((i, u, v, p_args, m_args, d["func"]))
                 i += 1
         #self.flows = f
         self.params_args = tf.ragged.constant(p_args_l)
@@ -527,41 +533,40 @@ class Model:
         print("\nAll edges parsed.")
         #self.scale = tf.SparseTensor(indices=s_i,values=s,dense_shape=(len(f),self.n_cmpts))
 
-    def get_expr_vars(self, expr, node=None, edge_d=None):
-        expr_vars = {}
-        expr_symbols = [str(x) for x in expr.free_symbols]
+    def lookup_parameters(self, params: list, node=None, edge_d=None):
+        expr_vars = []
         if node is not None:
-            for exp_var in expr_symbols:
+            for param in params:
                 # Search for parameter source
                 param_v = None
                 for source in [node,"all"]:
-                    if "params" in self.graph.nodes[source] and exp_var in self.graph.nodes[source]["params"]:
-                        param_v = self.graph.nodes[source]["params"][exp_var]
+                    if "params" in self.graph.nodes[source] and param in self.graph.nodes[source]["params"]:
+                        param_v = self.graph.nodes[source]["params"][param]
                         break
                 if param_v is None:
-                    raise RuntimeError(f"Parameter {exp_var} not defined for compartment {node}!")
+                    raise RuntimeError(f"Parameter {param} not defined for compartment {node}!")
 
                 # Multiplier just defaults to 0 (the hardcoded 1.0 index) if it is not defined.
                 mult_v = 0
                 for source in [node,"all"]:
-                    if "mults" in self.graph.nodes[source] and exp_var in self.graph.nodes[source]["mults"]:
-                        mult_v = self.graph.nodes[source]["mults"][exp_var]
+                    if "mults" in self.graph.nodes[source] and param in self.graph.nodes[source]["mults"]:
+                        mult_v = self.graph.nodes[source]["mults"][param]
                         break
-                expr_vars[exp_var] = (param_v, mult_v)
+                expr_vars.append((param_v, mult_v))
         elif edge_d is not None:
-            for exp_var in expr_symbols:
-                if "params" in edge_d and exp_var in edge_d["params"]:
-                    param_v = edge_d["params"][exp_var]
-                elif exp_var in self.graph["all"]["all"][0]["params"]:
-                    param_v = self.graph["all"]["all"][0]["params"][exp_var]
+            for param in params:
+                if "params" in edge_d and param in edge_d["params"]:
+                    param_v = edge_d["params"][param]
+                elif param in self.graph["all"]["all"][0]["params"]:
+                    param_v = self.graph["all"]["all"][0]["params"][param]
                 else:
                     raise RuntimeError("Unable to find parameter!")
                 mult_v = 0
-                if "mults" in edge_d and exp_var in edge_d["mults"]:
-                    mult_v = edge_d["mults"][exp_var]
-                elif "mults" in self.graph["all"]["all"][0] and exp_var in self.graph["all"]["all"][0]["mults"]:
-                    mult_v = self.graph["all"]["all"][0]["mults"][exp_var]
-                expr_vars[exp_var] = (param_v, mult_v)
+                if "mults" in edge_d and param in edge_d["mults"]:
+                    mult_v = edge_d["mults"][param]
+                elif "mults" in self.graph["all"]["all"][0] and param in self.graph["all"]["all"][0]["mults"]:
+                    mult_v = self.graph["all"]["all"][0]["mults"][param]
+                expr_vars.append((param_v, mult_v))
 
         return expr_vars
 
@@ -612,18 +617,22 @@ class Model:
         int_t = tf.cast(t, tf.int32)
         #params_t = self.params_at_t(int_t)
         #mults_t = self.mults_at_t(int_t)
-        #params_t = tf.gather(params[int_t],self.params_args)
-        #mults_t = tf.gather(mults[int_t],self.mults_args)
+        params_t = params[int_t]
+        mults_t = mults[int_t]
+        #params_mults_t = tf.multiply(params_t, mults_t)
         #params_mults_t = params_t * mults_t
-        params_t = tf.expand_dims(params[int_t],axis=1)
-        mults_t = tf.expand_dims(mults[int_t],axis=1)
-        y_scales = tf.expand_dims(tf.concat([tf.constant([1.0]),y],0),axis=1)
+        y_scales = tf.cond(tf.rank(y) == 2,
+                           true_fn=lambda: y,
+                           false_fn=lambda: tf.expand_dims(y, axis=1))
+        y_scales = tf.concat([tf.ones((1,y_scales.shape[1])), y], 0)
         y_scale_mat = tf.sparse.sparse_dense_matmul(self.scales_select,y_scales)
-        for i,(from_idx, to_idx, func) in enumerate(self.flows):
-            #params = tf.gather(params_t, p_args)
-            #mults = tf.gather(mults_t, m_args)
-            #params_mults = tf.multiply(params,mults)
-            val = func(params_t,mults_t)
+        for (i, from_idx, to_idx, p_args, m_args, func) in self.flows:
+            print(i)
+            #tf.print(i)
+            params_i = tf.gather(params_t, p_args)
+            mults_i = tf.gather(mults_t, m_args)
+            params_mults = tf.multiply(params_i,mults_i)
+            val = func(*tf.unstack(params_mults))
             #val = func(*tf.unstack(params_mults))
             vals.extend([-val,val])
             idcs.extend([(from_idx,from_idx),(to_idx,from_idx)])
@@ -648,7 +657,7 @@ class Model:
         y_scales = tf.concat([tf.constant([1.0]),y],axis=0)
 
 
-    @tf.function
+    #@tf.function
     def ode_with_matmul(self, t, y, params, mults):
         """
         :param t: Tensor representing the time T at which to compute dy.
@@ -699,6 +708,7 @@ class Model:
             y0=y0,
             t_eval=times,
             method="RK45",
+            vectorized=True
             #max_step=1.0
         )
         return solution
