@@ -15,12 +15,13 @@ import base64
 import sys
 import logging
 import pickle
+import time
 
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from covid_model.rmw_model import RMWCovidModel
-from covid_model.runnable_functions import do_single_fit, do_create_report, do_fit_scenarios, do_create_multiple_reports
+from covid_model.runnable_functions import do_single_fit, do_create_report, do_fit_scenarios, do_variant_optimization
 from covid_model.utils import setup, get_filepath_prefix
 from covid_model.analysis.charts import plot_transmission_control
 
@@ -52,16 +53,25 @@ def wrapper_run(args: dict):
     # For now we expect that all parameters for all regions exist in the same file.
     # TODO: Change this to support separate parameter files per-region.
     base_model_args = {
-        'params_defs': 'covid_model/input/rmw_temp_params.json',
+        'params_defs': 'covid_model/input/rmw_temp_params_changes_test.json',
+        #'params_defs': 'covid_model/input/rmw_temp_params.json',
         # 'region_defs': 'covid_model/input/rmw_region_definitions.json',
         'vacc_proj_params': 'covid_model/input/rmw_vacc_proj_params.json',
         'start_date': args["start_date"],
         'end_date': args["end_date"],
+        'fit_start_date': args["start_date"],
         'fit_end_date': args["base_model_fit_end_date"],
+        #'fit_start_date': "2022-02-02",
+        #'fit_end_date': args["scenarios_fit_end_date"],
         'regions': [instance_region],
         'tags': {"region": instance_region},
         'outdir': outdir,
-        'pickle_matrices': False
+        'pickle_matrices': False,
+        #'pre_solve_model': True,
+        #'tc_window_size': 30,
+        #'tc_window_batch_size': 3,
+        #'tc_batch_increment': 2
+        #'base_spec_id': 5115
     }
     
         # MODEL FITTING
@@ -113,43 +123,7 @@ def wrapper_run(args: dict):
         #'pre_solve_model': True
     #}
     # Set up the arguments for the scenario fits.
-    #scenario_model_args = []
-    #scenario_params = json.load(open(base_model_args["params_defs"]))
-    # ,  (0.8, 0.2, 0.04, 0.02), (0.95, 0.5, 0.1, 0.08),(0.9, 0.3, 0.05, 0.03)
-    # +/- 20% for all parameters
-    #orig_params = np.array([0.12, 0.42, 0.24, 0.86])
-    #plus_20 = orig_params*1.2
-    #minus_20 = orig_params*0.8
-    #for (strong_omc_escape, weak_omc_escape, strong_escape, weak_escape) in [orig_params,plus_20,minus_20]:
-        #weak_omicron_param = [{"param": "immune_escape",
-                       #"from_attrs": {"immun": "weak",
-                                      #"variant": ["omicron", "ba2", "ba2121", "ba45","bq"]},
-                       #"to_attrs": {"variant": ["xbb"]},
-                       #"vals": {"2020-01-01": weak_omc_escape},
-                       #"desc": "emerging variants immune escape value, weak immunity"}]
-        #strong_omicron_param = [{"param": "immune_escape",
-                         #"from_attrs": {"immun": "strong",
-                                        #"variant": ["omicron", "ba2", "ba2121", "ba45", "bq"]},
-                         #"to_attrs": {"variant": ["xbb"]},
-                         #"vals": {"2020-01-01": strong_omc_escape},
-                         #"desc": "emerging variants immune escape value, strong immunity"}]
-        #weak_param = [{"param": "immune_escape",
-                       #"from_attrs": {"immun": "weak",
-                                      #"variant": ["none", "wildtype", "alpha", "delta"]},
-                       #"to_attrs": {"variant": ["xbb"]},
-                       #"vals": {"2020-01-01": weak_escape},
-                       #"desc": "emerging variants immune escape value, weak immunity"}]
-        #strong_param = [{"param": "immune_escape",
-                         #"from_attrs": {"immun": "strong",
-                                        #"variant": ["none", "wildtype", "alpha", "delta"]},
-                         #"to_attrs": {"variant": ["xbb"]},
-                         #"vals": {"2020-01-01": strong_escape},
-                         #"desc": "emerging variants immune escape value, strong immunity"}]
-        #scenario_model_args.append({'params_defs': scenario_params + weak_param + strong_param + weak_omicron_param + strong_omicron_param,
-                                    #'tags': {'xbb_esc_omc_strong': strong_omc_escape,
-                                             #'xbb_esc_omc_weak': weak_omc_escape,
-                                             #'xbb_esc_strong': strong_escape,
-                                             #'xbb_esc_weak': weak_escape}})
+    scenario_model_args = []
     # SET SPEC IDs
     # Number of fits is the number of scenarios plus the base model fit
     #n_fits = len(scenario_model_args) + 1
@@ -157,19 +131,27 @@ def wrapper_run(args: dict):
     base_model_args["spec_id"] = spec_ids[0]
     for scen, spec_id in zip(scenario_model_args, spec_ids[1:]):
         scen["base_spec_id"] = spec_ids[0]
-        #scen["base_spec_id"] = 4887
+        #scen["base_spec_id"] = 5111
+        #scen["base_spec_id"] = 5226
         scen["spec_id"] = spec_id
     # MODEL FITTING
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
     base_model = do_single_fit(**base_model_args)
-    #base_model = RMWCovidModel(base_spec_id=4887)
-    #base_model.prep()
+    #base_model.tags["p"] = "ie_up"
+    start = time.perf_counter()
     base_model.solve_seir()
+    elapsed = time.perf_counter() - start
+    print(f"Solved ODE in {elapsed:0.2f} seconds.")
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
         pickle.dump(base_model.solution_ydf, f)
+    print("Finished base model fit.")
+    # Variant Optimization
+    #base_model = do_variant_optimization(model=base_model, **base_model_args)
     #base_model.solve_seir()
-
+    #with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
+    #   pickle.dump(base_model.solution_ydf, f)
+    #exit(0)
     # MODEL OUTPUTS
     logging.info('Projecting')
     do_create_report(base_model, outdir=outdir, prep_model=False, solve_model=False,
@@ -193,34 +175,35 @@ def wrapper_run(args: dict):
     plt.close()
     hosps_df.to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.csv')
     json.dump(base_model.tc, open(get_filepath_prefix(outdir, tags=base_model.tags) + 'model_forecast_tc.json', 'w'))
-    # SCENARIO FITTING
-    logging.info(f"{str(base_model.tags)}: Running scenarios")
-    models = do_fit_scenarios(base_model_args=base_model_args, scenario_args_list=scenario_model_args,
-                              fit_args=scenario_fit_args)
-    for model in models:
-        model.tags.update({"region": model.regions[0]})
-        do_create_report(model,
-                         outdir=outdir,
-                         immun_variants=args["report_variants"],
-                         from_date=args["report_start_date"],
-                         prep_model=False,
-                         solve_model=True)
-        xmin = datetime.datetime.strptime(args["start_date"], "%Y-%m-%d").date()
-        xmax = datetime.datetime.strptime(args["end_date"], "%Y-%m-%d").date()
-        fig = plt.figure(figsize=(10, 10), dpi=300)
-        ax = fig.add_subplot(211)
-        hosps_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
-        hosps_df.plot(ax=ax)
-        ax.set_xlim(xmin, xmax)
-        ax = fig.add_subplot(212)
-        plot_transmission_control(model, ax=ax)
-        ax.set_xlim(xmin, xmax)
-        plt.savefig(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.png')
-        plt.close()
-        hosps_df.to_csv(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.csv')
-        json.dump(model.tc, open(get_filepath_prefix(outdir, tags=model.tags) + 'model_forecast_tc.json', 'w'))
-        with open(get_filepath_prefix(outdir, tags=model.tags) + f"model_solutionydf.pkl", "wb") as f:
-            pickle.dump(model.solution_ydf, f)
+    #exit(0)
+    # # SCENARIO FITTING
+    # logging.info(f"{str(base_model.tags)}: Running scenarios")
+    # models = do_fit_scenarios(base_model_args=base_model_args, scenario_args_list=scenario_model_args,
+    #                           fit_args=scenario_fit_args)
+    # for model in models:
+    #     model.tags.update({"region": model.regions[0]})
+    #     do_create_report(model,
+    #                      outdir=outdir,
+    #                      immun_variants=args["report_variants"],
+    #                      from_date=args["report_start_date"],
+    #                      prep_model=False,
+    #                      solve_model=True)
+    #     xmin = datetime.datetime.strptime(args["start_date"], "%Y-%m-%d").date()
+    #     xmax = datetime.datetime.strptime(args["end_date"], "%Y-%m-%d").date()
+    #     fig = plt.figure(figsize=(10, 10), dpi=300)
+    #     ax = fig.add_subplot(211)
+    #     hosps_df = model.modeled_vs_observed_hosps().reset_index('region').drop(columns='region')
+    #     hosps_df.plot(ax=ax)
+    #     ax.set_xlim(xmin, xmax)
+    #     ax = fig.add_subplot(212)
+    #     plot_transmission_control(model, ax=ax)
+    #     ax.set_xlim(xmin, xmax)
+    #     plt.savefig(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.png')
+    #     plt.close()
+    #     hosps_df.to_csv(get_filepath_prefix(outdir, tags=model.tags) + '_model_forecast.csv')
+    #     json.dump(model.tc, open(get_filepath_prefix(outdir, tags=model.tags) + 'model_forecast_tc.json', 'w'))
+    #     with open(get_filepath_prefix(outdir, tags=model.tags) + f"model_solutionydf.pkl", "wb") as f:
+    #         pickle.dump(model.solution_ydf, f)
     logging.info("Task finished.")
 
 

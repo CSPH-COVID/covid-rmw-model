@@ -82,6 +82,31 @@ def plot_transmission_control(model, regions=None, **plot_params):
         tc_df = tc_df[regions]  # regions should be a list
     tc_df.plot(drawstyle="steps-post", xlim=(model.start_date, model.end_date), **plot_params)
 
+def plot_variant_proportions(model, ax, show_seeds=None):
+    # Plot variant proportions
+    use_variants = sorted(list(set(model.attrs["variant"]) - {"none"}))
+    color_idx = {v: (2 * iv) for iv, v in enumerate(use_variants)}
+    actual_var = model.variant_props.drop(columns=["none"])
+    for vname, vprop in zip(actual_var.columns, actual_var.T.values):
+        ax.plot(np.array([model.t_to_date(t) for t in actual_var.index]),
+                vprop,
+                color=tab20(color_idx[vname] + 1),
+                linestyle="--")
+    obs_variants = model.solution_var_props(tstart=model.tstart, tend=model.tend, variants=use_variants).reshape(
+        len(use_variants), -1)
+    for vname, vprop in zip(use_variants, obs_variants):
+        ax.plot(np.array([model.t_to_date(t) for t in range(model.tstart, model.tend + 1)]),
+                vprop,
+                label=f"{vname}",
+                color=tab20(color_idx[vname]))
+    ax.legend(fancybox=False, edgecolor="black", loc="lower left")
+    if show_seeds is not None:
+        for variant in show_seeds:
+            seed_p = min(key for key in model.seeds[model.regions[0]][f"{variant}_seed"] if key != 0)
+            seed_offset = model.seed_offsets[model.regions[0]][f"{variant}_seed"]
+            effective_seed = max(0, min(model.tend, seed_offset+seed_p))
+            ax.axvline(x=model.t_to_date(seed_p),color=tab20(color_idx[variant]))
+            ax.axvline(x=model.t_to_date(effective_seed),color=tab20(color_idx[variant]+1))
 
 def format_date_axis(ax, interval_months=None, **locator_params):
     locator = mdates.MonthLocator(interval=interval_months) if interval_months is not None else mdates.AutoDateLocator(

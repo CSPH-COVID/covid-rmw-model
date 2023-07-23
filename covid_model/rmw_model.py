@@ -8,6 +8,9 @@ import itertools
 from collections import OrderedDict, defaultdict
 import logging
 import pickle
+
+import networkx as nx
+
 """ Third Party Imports """
 import numpy as np
 #np.seterr(invalid="raise")
@@ -22,7 +25,7 @@ from sortedcontainers import SortedDict
 from matplotlib import pyplot as plt
 """ Local Imports """
 from covid_model.ode_flow_terms import ConstantODEFlowTerm, ODEFlowTerm
-from covid_model.data_imports import ExternalVacc, ExternalHospsEMR, ExternalHospsCOPHS, ExternalPopulation, ExternalRegionDefs, get_region_mobility_from_db
+from covid_model.data_imports import ExternalVacc, ExternalHospsEMR, ExternalHospsCOPHS, ExternalPopulation, ExternalRegionDefs, ExternalVariantProportions, get_region_mobility_from_db
 from covid_model.utils import IndentLogger, get_filepath_prefix, get_sqa_table, db_engine
 
 logger = IndentLogger(logging.getLogger(''), {})
@@ -54,8 +57,10 @@ class RMWCovidModel:
                                     # agecat_finder
                                     'age': ['0-17', '18-64', '65+'],
                                     'vacc': ['none', 'shot1', 'shot2', 'booster1', 'booster23'],
-                                    'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba2121', 'ba45', 'bq', 'xbb'],
-                                    'immun': ['none', 'weak', 'strong'],
+                                    #'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba2121', 'ba45', 'bq', 'xbb'],
+                                    'variant': ['none', 'wildtype', 'alpha', 'delta', 'omicron', 'ba2', 'ba45', 'bq', 'xbb'],
+                                    #'immun': ['none', 'weak', 'strong'],
+                                    'immun': ["low", "medium", "high"],
                                     # region_finder
                                     'region': ['coe','con','cow','ide','idn','ids','idw','mte','mtn','mtw','nme','nmn','nms','nmw','ute','utn','uts','utw','wye','wyn','wyw']})
         # labels used when logging and writing to db.
@@ -77,16 +82,22 @@ class RMWCovidModel:
         self.exposed_cmpt_idcs = {}
         self.exposed_region_lookup = {}
         self.__seeds = {}
-        self.seed_t_prev_lookup = {}
+        self.__seed_offsets = {}
+        self.__seed_scalers = {}
+        self.__voffset_max = 30.0
+        self.__soffset_max = 50.0
+        self.variant_props = None
 
         # Model compartments, lookups, and ODE solution
         self.compartments_as_index = None
         self.Ih_compartments = None
+        self.variant_compartments = None
         self.compartments = None
         self.cmpt_idx_lookup = None
         self.param_compartments = None
         self.params_trange = None
         self.solution_y = None
+        self.graph = None
 
         # data related params
         self.__params_defs = None # default params
@@ -166,6 +177,7 @@ class RMWCovidModel:
         # Always update region defs and parameters.
         self.get_region_defs()
         self.get_population_data()
+        self.get_variant_props()
         # Always update vaccination parameters
 
 
@@ -669,6 +681,9 @@ class RMWCovidModel:
         """
         self.compartments_as_index = pd.MultiIndex.from_product(self.attrs.values(), names=self.attr_names)
         self.Ih_compartments = self.compartments_as_index.get_level_values(0) == "Ih"
+        # IS NOT COMPATIBLE WITH MULTIPLE REGIONS THIS WILL BREAK WITH MULTIPLE REGIONS
+        # TODO: Fix this so it works with multiple regions
+        self.variant_compartments = np.concatenate([np.argwhere((self.compartments_as_index.get_level_values("variant") == v) & (self.compartments_as_index.get_level_values("seir") == "I")).squeeze() for v in self.attrs["variant"]])
         self.compartments = list(self.compartments_as_index)
         self.cmpt_idx_lookup = pd.Series(index=self.compartments_as_index, data=range(len(self.compartments_as_index))).to_dict()
         self.param_compartments = list(set(tuple(attr_val for attr_val, attr_name in zip(cmpt, self.attr_names) if attr_name in self.param_attr_names) for cmpt in self.compartments))
@@ -894,8 +909,8 @@ class RMWCovidModel:
         """
         if self.__y0_dict is None:
             # get the population of each age group in each region.
-            group_pops = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'none'}).loc[0].reset_index().drop(columns=['vacc', 'variant', 'immun'])
-            y0d = {('S', row['age'], 'none', 'none', 'none', row['region']): row['region_age_pop'] for i, row in group_pops.iterrows()}
+            group_pops = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'low'}).loc[0].reset_index().drop(columns=['vacc', 'variant', 'immun'])
+            y0d = {('S', row['age'], 'none', 'none', 'low', row['region']): row['region_age_pop'] for i, row in group_pops.iterrows()}
             self.__y0_dict = y0d
             return y0d
         else:
@@ -939,6 +954,26 @@ class RMWCovidModel:
         :return: Parameter seed dictionary
         """
         return self.__seeds
+
+    @property
+    def voffset_max(self):
+        """ Returns the maximum offset allowed (positive or negative) when optimizing variant seeding"""
+        return self.__voffset_max
+
+    @property
+    def soffset_max(self):
+        """ Returns the maximum scaling value when optimizing variant seeding"""
+        return self.__soffset_max
+
+    @property
+    def seed_offsets(self):
+        """ Get the dictionary containing offsets for each variant seeding plan."""
+        return self.__seed_offsets
+
+    @property
+    def seed_scalers(self):
+        """ Get the dictionary containing scalar values for each variant seed"""
+        return self.__seed_scalers
 
     @property
     def params_as_dict(self):
@@ -1143,6 +1178,16 @@ class RMWCovidModel:
         region_levels = self.compartments_as_index.get_level_values(-1)
         Ih = np.concatenate([self.solution_y[tstart:(tend + 1), self.Ih_compartments & (region_levels == region)].sum(axis=1) for region in regions])
         return Ih
+
+    def solution_var_props(self,tstart,tend,variants):
+        all_variants = self.attrs["variant"]
+        idx_rearr = {v:i for i,v in enumerate(all_variants)}
+        variant_idcs = self.variant_compartments
+        tmp_solution_y = self.solution_y[tstart:(tend+1)]
+        variant_inf_count = np.clip(tmp_solution_y[:,variant_idcs].reshape(tmp_solution_y.shape[0],len(all_variants),-1).sum(axis=-1),0.0,None)
+        variant_inf_props = variant_inf_count / np.maximum(variant_inf_count.sum(axis=1,keepdims=True),np.finfo(np.float32).eps)
+        var_inf_props_rearr = np.concatenate([variant_inf_props[:,idx_rearr[v]] for v in variants])
+        return var_inf_props_rearr
 
     def immunity(self, variant='omicron', vacc_only=False, to_hosp=False, age=None):
         """Compute the immunity of the population against a given variant.
@@ -1426,7 +1471,7 @@ class RMWCovidModel:
         vacc_rates = vacc_rates.set_index('t', append=True)
         # get the population of each age group (in each region) at each point in time. Should work with changing populations, but right now pop is static
         # also, attrs doesn't matter since the `region_age_pop` is just specific to an age group and region
-        populations = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'none'}).reset_index([an for an in self.param_attr_names if an not in ['region', 'age']])[['region_age_pop']]
+        populations = self.get_param_for_attrs_by_t('region_age_pop', attrs={'vacc': 'none', 'variant': 'none', 'immun': 'low'}).reset_index([an for an in self.param_attr_names if an not in ['region', 'age']])[['region_age_pop']]
         vacc_rates_ts = vacc_rates.index.get_level_values('t').unique()
         populations = populations.iloc[[t in vacc_rates_ts for t in populations.index.get_level_values('t')]].reorder_levels(['region', 'age', 't']).sort_index()
         populations.rename(columns={'region_age_pop': 'population'}, inplace=True)
@@ -1587,6 +1632,31 @@ class RMWCovidModel:
         self.params_defs = non_pop_params + pop_params
         self.recently_updated_properties.append("params_defs")
 
+    def get_variant_props(self):
+        """Fetch the variant proportions and store them for fitting."""
+        logger.info(f"{str(self.tags)} Retrieving variant proportions")
+        engine = db_engine()
+        var_props = ExternalVariantProportions(engine).fetch_from_db(self.regions[0])
+        avail_prop_cols = set(var_props.columns)
+        avail_model_cols = set(self.attrs["variant"])
+
+        model_missing_cols = avail_prop_cols - avail_model_cols
+        if len(model_missing_cols) != 0:
+            logger.info(f"{str(self.tags)} Model is missing variant(s): {model_missing_cols} "
+                        f"which exist in variant proportion data. Proportions will be rescaled to match.")
+            var_props.drop(columns=model_missing_cols,inplace=True)
+            var_props = var_props.divide(var_props.sum(axis=1),axis="index")
+        data_missing_cols = avail_model_cols - avail_prop_cols
+        if len(data_missing_cols) != 0:
+            self.log_and_raise(f"Model contains variant(s): {data_missing_cols} which do not exist in "
+                               "variant proportion data. Please modify or update variant proportion data to contain "
+                               "these variants",
+                               ValueError)
+        t_offset = self.date_to_t(var_props.index.min().date())
+        var_props.set_index(pd.RangeIndex(start=t_offset,stop=len(var_props) + t_offset),inplace=True)
+        self.variant_props = var_props
+
+
     def build_param_lookups(self, apply_vaccines=True, vacc_delay=14):
         """ combine param_defs list and vaccination_data into a time indexed parameters dictionary
 
@@ -1603,7 +1673,8 @@ class RMWCovidModel:
                 self.set_from_to_compartment_param(**param_def)
             else:
                 self.set_compartment_param(**param_def)
-        # Add 't' parameter to the params_by_t
+                
+        # Add a 't' parameter to the dictionary
         self.params_by_t["all"]["t"] = SortedDict({i: i for i in self.trange})
 
         # determine all times when params change
@@ -1641,7 +1712,30 @@ class RMWCovidModel:
         # Testing changing the vaccination to every week
         self.params_trange = sorted(list(set.union(*[set(param.keys()) for param_key in self.params_by_t.values() for param in param_key.values()])))
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
-        # Build lookup for variant seeds
+        # Build lookup for variant seeds, offset values and scaling values
+        # REMOVE THIS
+        offsets_hardcoded = pd.read_csv("/opt/project/seeds_offsets_scales_final_maybe.csv", index_col=0)
+        self.__seed_offsets = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_offsets"])}
+        self.__seed_scalers = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_scales"])}
+
+        #self.__seed_offsets = {f"{variant}_seed":0 for variant in self.attrs["variant"] if variant != "none"}
+        #self.__seed_scalers = {f"{variant}_seed":1.0 for variant in self.attrs["variant"] if variant != "none"}
+
+        for region in self.attrs["region"]:
+            self.__seeds[region] = {}
+            for variant in self.attrs["variant"]:
+                if variant == "none":
+                    continue
+                seed_string = f"{variant}_seed"
+                # Extract the parameter dictionary from params_by_t. This saves us having to re-calculate the
+                # multiplier * base parameter seed.
+                seed_dict = self.params_by_t["all"][seed_string]
+                # Make a copy of the seed dictionary.
+                # We can use this dictionary to fine-tune the variant seeds.
+                seed_arr = np.zeros(self.tend+1)
+                for t,val in seed_dict.items():
+                    seed_arr[t:] = val
+                self.__seeds[region][seed_string] = seed_arr
 
 
     def update_tc(self, tc, replace=True, update_lookup=True):
@@ -1665,6 +1759,17 @@ class RMWCovidModel:
             self.__tc.update(tc)
         if update_lookup:
             self.tc_t_prev_lookup = [max(t for t in self.__tc.keys() if t <= t_int) for t_int in self.trange]  # lookup for latest defined TC value
+
+    def update_seed_offsets(self, offsets: dict):
+        """ Offset the current value of the seed by T days
+
+        :param offsets:
+        :return:
+        """
+        self.seed_offsets.update(offsets)
+
+    def update_seed_scalers(self, scalers: dict):
+        self.seed_scalers.update(scalers)
 
     def _default_nonlinear_matrix(self):
         """A function that constructs an empty nonlinear matrix with the correct dimensions.
@@ -1771,7 +1876,7 @@ class RMWCovidModel:
         else:
             return {t: coef for t in self.params_trange}
 
-    def add_flow_from_cmpt_to_cmpt(self, from_cmpt, to_cmpt, from_coef=None, to_coef=None, from_to_coef=None, scale_by_cmpts=None, scale_by_cmpts_coef=None, constant=None):
+    def add_flow_from_cmpt_to_cmpt(self, from_cmpt, to_cmpt, from_coef=None, to_coef=None, from_to_coef=None, scale_by_cmpts=None, scale_by_cmpts_coef=None, constant=None, graph=None):
         """add a flow term, and add new flow to ODE matrices
 
         Depending on the passed arguments, a term will be added to either the constant vector, linear matrix, or one or
@@ -1827,6 +1932,17 @@ class RMWCovidModel:
             scale_by_cmpts_coef_by_t=coef_by_t_dl if scale_by_cmpts is not None else None,
             constant_by_t=self.calc_coef_by_t(constant, to_cmpt) if constant is not None else None)
 
+        if graph is not None:
+            graph.add_edge(from_cmpt,
+                           to_cmpt,
+                           term=term,
+                           to_coef=to_coef,
+                           from_coef=from_coef,
+                           from_to_coef=from_to_coef,
+                           scale_by_cmpts=scale_by_cmpts,
+                           scale_by_cmpts_coef=scale_by_cmpts_coef,
+                           constant_coef=constant)
+
         # don't even add the term if all its coefficients are zero
         if not (isinstance(term, ConstantODEFlowTerm)) and all([c == 0 for c in term.coef_by_t.values()]):
             pass
@@ -1842,7 +1958,7 @@ class RMWCovidModel:
                 #term.add_to_constant_vector(self.constant_vector[t], t)
 
 
-    def add_flows_from_attrs_to_attrs(self, from_attrs, to_attrs, from_coef=None, to_coef=None, from_to_coef=None, scale_by_attrs=None, scale_by_coef=None, constant=None):
+    def add_flows_from_attrs_to_attrs(self, from_attrs, to_attrs, from_coef=None, to_coef=None, from_to_coef=None, scale_by_attrs=None, scale_by_coef=None, constant=None, graph=None):
         """add  flows from one set of compartments to another set of compartments
 
         The "from" compartments are all compartments matching the attributes specified in from_attrs
@@ -1887,37 +2003,42 @@ class RMWCovidModel:
             to_cmpts = self.update_cmpt_tuple_with_attrs(from_cmpt, to_attrs)
             for to_cmpt in to_cmpts:
                 self.add_flow_from_cmpt_to_cmpt(from_cmpt, to_cmpt, from_coef=from_coef, to_coef=to_coef, from_to_coef=from_to_coef, scale_by_cmpts=scale_by_cmpts,
-                                                scale_by_cmpts_coef=scale_by_coef, constant=constant)
+                                                scale_by_cmpts_coef=scale_by_coef, constant=constant, graph=graph)
 
-    def build_ode_flows(self):
+
+    def build_ode_flows(self,graph_trace=True):
         """Create all the flows that should be in the model, to represent the different dynamics we are modeling
 
         """
         logger.debug(f"{str(self.tags)} Building ode flows")
         self.flows_string = self.flows_string = '(' + ','.join(self.attr_names) + ')'
         self.reset_ode()
+
+        # Trace the flows with the graph if 'graph_trace' is True
+        graph = None
+        if graph_trace:
+            logger.info(f"{str(self.tags)} Graph trace enabled.")
+            graph = nx.MultiDiGraph()
+            graph.add_nodes_from([(cmpt, {k:v for k,v in zip(self.attrs,cmpt)}) for cmpt in self.compartments])
         # vaccination
         logger.debug(f"{str(self.tags)} Building vaccination flows")
         for seir in ['S', 'E', 'A']:
-            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'weak'},
-                                               from_coef=f'shot1_per_available * (1 - shot1_fail_rate)')
-            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'none'},
-                                               from_coef=f'shot1_per_available * shot1_fail_rate')
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'medium'},
+                                               from_coef=f'shot1_per_available * shot1_ve',
+                                               graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'none'}, {'vacc': f'shot1', 'immun': f'low'},
+                                               from_coef=f'shot1_per_available * (1-shot1_ve)',
+                                               graph=graph)
             for (from_shot, to_shot) in [('shot1', 'shot2'), ('shot2', 'booster1'), ('booster1', 'booster23')]:
                 for immun in self.attrs['immun']:
-                    if immun == 'none':
-                        # if immun is none, that means that the first vacc shot failed, which means that future shots may fail as well
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'strong'},
-                                                           from_coef=f'{to_shot}_per_available * (1 - {to_shot}_fail_rate / {to_shot}_fail_rate)')
+                                                           {'vacc': f'{to_shot}', 'immun': f'high'},
+                                                           from_coef=f'{to_shot}_per_available * {to_shot}_ve',
+                                                           graph=graph)
                         self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'none'},
-                                                           from_coef=f'{to_shot}_per_available * ({to_shot}_fail_rate / {to_shot}_fail_rate)')
-                    else:
-                        self.add_flows_from_attrs_to_attrs({'seir': seir, 'vacc': f'{from_shot}', "immun": immun},
-                                                           {'vacc': f'{to_shot}', 'immun': f'strong'},
-                                                           from_coef=f'{to_shot}_per_available')
-
+                                                           {'vacc': f'{to_shot}', 'immun': immun},
+                                                           from_coef=f'{to_shot}_per_available * (1-{to_shot}_ve)',
+                                                           graph=graph)
 
         # seed variants (only seed the ones in our attrs)
         # This is now implemented directly in the ode() function, since we need to handle which compartment to seed from
@@ -1939,12 +2060,10 @@ class RMWCovidModel:
             # No mobility between regions (or a single region)
             if self.mobility_mode is None or self.mobility_mode == "none":
                 for region in self.attrs['region']:
-                    # Seasonality test changes
-                    # * (1 + beta1 * cos(2*pi*t/365)) add to to_coef for seasonality
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb * betta * (1 + beta1 * cos(2*pi*t/365))', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region})
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='betta * (1 + beta1 * cos(2*pi*t/365))', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region})
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="lamb * betta * (1 + beta1 * cos(2*pi*t/365))", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region})
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="betta * (1 + beta1 * cos(2*pi*t/365))", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region})
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb * betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="lamb * betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph)
             # Transmission parameters attached to the susceptible population
             elif self.mobility_mode == "population_attached":
                 for infecting_region in self.attrs['region']:
@@ -1965,36 +2084,61 @@ class RMWCovidModel:
 
         # disease progression
         logger.debug(f"{str(self.tags)} Building disease progression flows")
-        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'I'}, to_coef='1 / alpha * pS')
-        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'A'}, to_coef='1 / alpha * (1 - pS)')
+        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'I'}, to_coef='1 / alpha * pS',graph=graph)
+        self.add_flows_from_attrs_to_attrs({'seir': 'E'}, {'seir': 'A'}, to_coef='1 / alpha * (1 - pS)',graph=graph)
         # assume no one is receiving both pax and mab
         # removing mab_hosp_adj
-        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * (1 - mab_prev - pax_prev)')
-        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * mab_prev * mab_hosp_adj')
-        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * pax_prev * pax_hosp_adj')
+        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * (1 - mab_prev*mab_hosp_adj - pax_prev*pax_hosp_adj)',graph=graph)
+        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * mab_prev * mab_hosp_adj',graph=graph)
+        self.add_flows_from_attrs_to_attrs({'seir': 'I'}, {'seir': 'Ih'}, to_coef='gamm * hosp * (1 - severe_immunity) * pax_prev * pax_hosp_adj',graph=graph)
 
         # disease termination
         logger.debug(f"{str(self.tags)} Building termination flows")
         for variant in self.attrs['variant']:
             if variant == 'none':
                 continue
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='gamm * (1 - hosp - dnh) * (1 - priorinf_fail_rate)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * (1 - hosp - dnh) * priorinf_fail_rate')
-            self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='gamm * (1 - priorinf_fail_rate)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * priorinf_fail_rate')
+            # TODO fix this
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='gamm * (1 - hosp*(1-severe_immunity) - dnh*(1-severe_immunity)) * (1 - priorinf_fail_rate)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * (1 - hosp*(1-severe_immunity) - dnh*(1-severe_immunity)) * priorinf_fail_rate',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='gamm * (1 - priorinf_fail_rate)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant}, {'seir': 'S'}, to_coef='gamm * priorinf_fail_rate',graph=graph)
+            # for prior_immunity in self.attrs["immun"]:
+            #     # Three cases:
+            #     # 1. Prior immunity low -> resulting immunity is medium
+            #     # 2. Prior immunity medium -> resulting immunity is high
+            #     # 3. Prior immunity high -> resulting immunity is high
+            #
+            #     resulting_immunity = "medium" if prior_immunity == "low" else "high"
+            #     self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant, 'immun': prior_immunity}, {'seir': 'S', 'immun': resulting_immunity}, to_coef='gamm * (1 - priorinf_fail_rate)',graph=graph)
+            #     self.add_flows_from_attrs_to_attrs({'seir': 'A', 'variant': variant, 'immun': prior_immunity}, {'seir': 'S'}, to_coef='gamm * priorinf_fail_rate',graph=graph)
 
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate) * (1-mab_prev)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * (1-mab_prev)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'strong'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * (1 - priorinf_fail_rate) * mab_prev')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / (hlos * mab_hlos_adj) * (1 - dh) * priorinf_fail_rate * mab_prev')
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate)',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * (1-mab_prev)',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S', 'immun': 'high'}, to_coef='1 / hlos * (1 - dh) * (1 - priorinf_fail_rate) * mab_prev',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate * mab_prev',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'S'}, to_coef='1 / hlos * (1 - dh) * priorinf_fail_rate',graph=graph)
 
-            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'D'}, to_coef='gamm * dnh * (1 - severe_immunity)')
-            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'D'}, to_coef='1 / hlos * dh')
+            self.add_flows_from_attrs_to_attrs({'seir': 'I', 'variant': variant}, {'seir': 'D'}, to_coef='gamm * dnh * (1 - severe_immunity)',graph=graph)
+            self.add_flows_from_attrs_to_attrs({'seir': 'Ih', 'variant': variant}, {'seir': 'D'}, to_coef='1 / hlos * dh',graph=graph)
 
         # immunity decay
         logger.debug(f"{str(self.tags)} Building immunity decay flows")
         for seir in [seir for seir in self.attrs['seir'] if seir != 'D']:
-            self.add_flows_from_attrs_to_attrs({'seir': seir, 'immun': 'strong'}, {'immun': 'weak'}, to_coef='1 / imm_decay_days')
+            self.add_flows_from_attrs_to_attrs({'seir': seir, 'immun': 'high'}, {'immun': 'medium'}, to_coef='1 / imm_decay_high_medium',graph=graph)
+            #self.add_flows_from_attrs_to_attrs({'seir': seir, 'immun': 'medium'}, {'immun': 'low'}, to_coef='1 / imm_decay_medium_low',graph=graph)
+
+
+        if graph_trace:
+            self.graph = graph
+            tags_to_str = "_".join([f"{k}_{v}" for k,v in self.tags.items()])
+            logger.info(f"{str(self.tags)} Traced graph has {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
+            #graph_fname = get_filepath_prefix("", self.tags) + "graph"
+            #logger.info(f"{str(self.tags)} Writing traced graph to '{graph_fname}.pkl'.")
+            # with open(graph_fname + ".pkl","wb") as f:
+            #     pickle.dump(graph,f)
+            # with open(f"{tags_to_str}_params.pkl", "wb") as f:
+            #     pickle.dump(self.params_by_t,f)
+            #nx.write_gexf(graph,graph_fname + ".gexf")
 
     def build_region_picker_matrix(self):
         """A matrix which indicates the region associated with each compartment.
@@ -2023,6 +2167,22 @@ class RMWCovidModel:
                 self.nonlinear_matrices[t][k] = v.tocsr()
         self.region_picker_matrix = self.region_picker_matrix.tocsr()
 
+    def soft_shift(self, arr, shift):
+        l = math.floor(shift)
+        r = math.ceil(shift)
+        frac_l = r - shift
+
+        pos_shift = (shift > 0)
+        if pos_shift:
+            lpad = np.pad(arr, (l, 0))[:(-l) if l != 0 else None]
+            rpad = np.pad(arr, (r, 0))[:-r]
+        else:
+            absl = abs(l)
+            absr = abs(r)
+            lpad = np.pad(arr, (0, absl))[absl:]
+            rpad = np.pad(arr, (0, absr))[absr:]
+
+        return lpad * (frac_l) + rpad * (1-frac_l)
 
     def ode(self, t: float, y: list):
         """Compute the derivative WRT time of the model at a time t and state vector y. Used to solve the system of ODE's
@@ -2035,16 +2195,17 @@ class RMWCovidModel:
 
         """
         dy = [0] * self.n_compartments
-        t_int = self.t_prev_lookup[math.floor(t)]
-        t_tc = self.tc_t_prev_lookup[math.floor(t)]
+        t_int = math.floor(t)
+        t_last = self.t_prev_lookup[t_int]
+        t_tc = self.tc_t_prev_lookup[t_int]
         nlm = [(1 - self.__tc[t_tc][region]) for region in self.regions]
         nlm_vec = self.region_picker_matrix.dot(nlm)
 
         # apply linear terms
-        dy += (self.linear_matrix[t_int]).dot(y)
+        dy += (self.linear_matrix[t_last]).dot(y)
 
         # apply non-linear terms
-        for scale_by_cmpt_idxs, matrix in self.nonlinear_matrices[t_int].items():
+        for scale_by_cmpt_idxs, matrix in self.nonlinear_matrices[t_last].items():
             dy += nlm_vec * sum(itemgetter(*scale_by_cmpt_idxs)(y)) * matrix.dot(y)
 
         # TODO: Constant terms are ONLY used for the seeding, so we just need to replace this constant vector.
@@ -2057,10 +2218,14 @@ class RMWCovidModel:
         # prior infection. The old method of pulling from the (S, 18-64, none, none, none) compartment starts to fail
         # since this compartment approaches zero over time.
         for region in self.regions:
+            idxs = self.susceptible_cmpt_idcs[region]
             # Find the index of the largest of the susceptible compartments at the previous timestep.
-            from_cmpt_index = y[self.susceptible_cmpt_idcs[region]].argmax()
+            from_cmpt_index = idxs[y[idxs].argmax()]
             # Find the name of the compartment
             from_cmpt = self.compartments[from_cmpt_index]
+            # Seeds
+            seeds = self.seeds[region]
+            #n_t = np.arange(self.tend+1)
             # For each variant
             for variant in self.attrs["variant"]:
                 if variant == "none":
@@ -2074,11 +2239,16 @@ class RMWCovidModel:
                 # Look up the index of the exposed compartment.
                 to_cmpt_idx = self.cmpt_idx_lookup[to_cmpt]
                 # Find a time key less than or equal to the current T value.
-                param_dict = self.params_by_t[from_cmpt[1:]][f"{variant}_seed"]
-                # Get the key for the current time step.
-                leq_key = max([key for key in param_dict.keys() if key <= t_int])
+                seed_str = f"{variant}_seed"
+                seed_arr = seeds[seed_str]
+
+                offset = self.seed_offsets[seed_str]
+                scaler = self.seed_scalers[seed_str]
                 # Get the seed value from the parameters.
-                seed_val = param_dict[leq_key]
+                seed_val = self.soft_shift(seed_arr,offset)[t_int] * scaler
+                #seed_val = seed_arr[int(np.clip(t_int+offset, 0, self.tend))] * scaler
+                #seed_val = seed_arr[t_int]*scaler
+                #seed_val = np.interp(t_int+offset,np.arange(n_t),)
                 if y[from_cmpt_index] - seed_val < 0:
                     raise ValueError(f"Seeding would cause compartment to become negative!\n{from_cmpt} Value: {y[from_cmpt_index]}\n{variant} Seed Value: {seed_val}")
                 # Subtract the seed value from the susceptible compartment.
@@ -2285,6 +2455,18 @@ class RMWCovidModel:
         """
         return {tuple(li[:-1]): float(li[-1]) for li in y0_list} if y0_list is not None else None
 
+    @classmethod
+    def serialize_seeds(cls, seed_dict:dict):
+        """ Serialize a dict-of-dict-of-ndarray representing the seed arrays for the model.
+
+        Args:
+            seed_dict: dict of dict of ndarray.
+
+        Returns: Same dictionary structure, but with ndarray converted to list so that the object can be serialized
+                 with JSON dump.
+        """
+        return {reg:{var:list(var_seeds) for var,var_seeds in reg_seeds.items()} for reg,reg_seeds in seed_dict.items()}
+
     def to_json_string(self):
         """serializes SOME of this model's properties to a json format which can be written to database.
 
@@ -2304,7 +2486,9 @@ class RMWCovidModel:
                 '_RMWCovidModel__region_defs', '_RMWCovidModel__regions', '_RMWCovidModel__vacc_proj_params',
                 '_RMWCovidModel__mobility_mode', 'actual_mobility', 'proj_mobility', 'proj_mobility',
                 '_RMWCovidModel__mobility_proj_params', 'actual_vacc_df', 'proj_vacc_df', 'hosps', #'_RMWCovidModel__hosp_reporting_frac',
-                '_RMWCovidModel__y0_dict', 'max_step_size', 'ode_method']
+                '_RMWCovidModel__y0_dict', '_RMWCovidModel__seeds', '_RMWCovidModel__seed_offsets',
+                '_RMWCovidModel__seed_scalers', '_RMWCovidModel__voffset_max', '_RMWCovidModel__soffset_max',
+                'max_step_size', 'ode_method']
         # add in proj_mobility
         serial_dict = OrderedDict()
         for key in keys:
@@ -2323,6 +2507,8 @@ class RMWCovidModel:
                 serial_dict[key] = self.serialize_y0_dict(val)
             elif key == 'max_step_size':
                 serial_dict[key] = val if not np.isinf(val) else 'inf'
+            elif key == "_RMWCovidModel__seeds":
+                serial_dict[key] = self.serialize_seeds(val)
             else:
                 serial_dict[key] = val
         return json.dumps(serial_dict)
