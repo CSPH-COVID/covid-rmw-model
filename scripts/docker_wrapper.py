@@ -126,7 +126,7 @@ def wrapper_run(args: dict):
     scenario_model_args = []
     # SET SPEC IDs
     # Number of fits is the number of scenarios plus the base model fit
-    #n_fits = len(scenario_model_args) + 1
+    n_fits = len(scenario_model_args) + 1
     spec_ids = [START_SPEC_ID + (BATCH_TASK_INDEX * n_fits) + i for i in range(n_fits)]
     base_model_args["spec_id"] = spec_ids[0]
     for scen, spec_id in zip(scenario_model_args, spec_ids[1:]):

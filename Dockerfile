@@ -9,7 +9,7 @@ FROM python:3.10-bullseye
 # Set a working directory.
 WORKDIR /covid_rmw_model
 # Copy requirements.txt
-COPY requirements.txt ./ \
+COPY requirements.txt ./
 # Install required packages
 RUN pip install --no-cache-dir -r requirements.txt
 # Copy the files over to the image.
