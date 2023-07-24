@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 from scipy import optimize as spo
 from matplotlib import pyplot as plt
-from matplotlib.cm import tab20b, tab20c, tab20
+from matplotlib.cm import tab10, tab20b, tab20c, tab20
 from matplotlib.patches import Rectangle
 import matplotlib.ticker as mtick
 """ Local Imports """
@@ -268,8 +268,19 @@ def forward_sim_plot(model, outdir, highlight_range=None):
     fig, axs = plt.subplots(nrows=3, ncols=len(model.regions), figsize=(10*len(model.regions), 18), dpi=300, sharex=True, sharey=False, squeeze=False)
     hosps_df = model.modeled_vs_observed_hosps()
     for i, region in enumerate(model.regions):
-        hosps_df.loc[region].plot(ax=axs[0, i])
+        # Observed hospitalizations are plotted in their entirety.
+        axs[0, i].plot(hosps_df.loc[region,"observed"], label="Observed Hosp.", color=tab10(0))
+        # Split modeled hospitalizations so that we can delineate when fitting ends and projection starts
+        region_modeled_hosps = hosps_df.loc[region, "modeled_observed"]
+        fit_end = hosps_df.loc[region, "observed"].isna().idxmax()
+        fitted_hosps = region_modeled_hosps.loc[:fit_end]
+        axs[0, i].plot(fitted_hosps, label="Modeled Hosp. (Fitted)", color=tab10(1))
+        proj_hosps = region_modeled_hosps.loc[fit_end:]
+        if len(proj_hosps) > 0:
+            axs[0, i].plot(proj_hosps, label="Modeled Hosp. (Projection)", color=tab10(1), linestyle="--")
+        #hosps_df.loc[region].plot(ax=axs[0, i])
         axs[0,i].title.set_text(f'Hospitalizations: {region}')
+        axs[0,i].legend(fancybox=False, edgecolor="black")
         plot_transmission_control(model, [region], ax=axs[1,i])
         if highlight_range is not None:
             lb,ub = highlight_range
