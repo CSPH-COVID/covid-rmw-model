@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from covid_model.rmw_model import RMWCovidModel
-from covid_model.runnable_functions import do_single_fit, do_create_report, do_fit_scenarios, do_variant_optimization
+from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot
 from covid_model.utils import setup, get_filepath_prefix
 from covid_model.analysis.charts import plot_transmission_control
 
@@ -81,6 +81,8 @@ def wrapper_run(args: dict):
     #base_model = RMWCovidModel(base_spec_id=4887)
     #base_model.prep()
     base_model.solve_seir()
+    forward_sim_plot(base_model, outdir=outdir)
+
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
         pickle.dump(base_model.solution_ydf, f)
     #base_model.solve_seir()
