@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from covid_model.rmw_model import RMWCovidModel
-from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot
+from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot, do_variant_optimization
 from covid_model.utils import setup, get_filepath_prefix
 from covid_model.analysis.charts import plot_transmission_control
 
@@ -78,9 +78,13 @@ def wrapper_run(args: dict):
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
     base_model = do_single_fit(**base_model_args)
-    #base_model = RMWCovidModel(base_spec_id=4887)
-    #base_model.prep()
+    base_model.tags["vopt"] = "pre"
     base_model.solve_seir()
+    forward_sim_plot(base_model, outdir=outdir)
+    # Optimize variants and write results.
+    base_model = do_variant_optimization(model=base_model, **base_model_args)
+    base_model.solve_seir()
+    base_model.tags["vopt"] = "post"
     forward_sim_plot(base_model, outdir=outdir)
 
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
@@ -149,8 +153,8 @@ def wrapper_run(args: dict):
         pickle.dump(base_model.solution_ydf, f)
     print("Finished base model fit.")
     # Variant Optimization
-    base_model = do_variant_optimization(model=base_model, **base_model_args)
-    base_model.solve_seir()
+    #base_model = do_variant_optimization(model=base_model, **base_model_args)
+    #base_model.solve_seir()
     #with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
     #   pickle.dump(base_model.solution_ydf, f)
     #exit(0)
