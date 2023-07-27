@@ -149,8 +149,8 @@ def wrapper_run(args: dict):
         pickle.dump(base_model.solution_ydf, f)
     print("Finished base model fit.")
     # Variant Optimization
-    #base_model = do_variant_optimization(model=base_model, **base_model_args)
-    #base_model.solve_seir()
+    base_model = do_variant_optimization(model=base_model, **base_model_args)
+    base_model.solve_seir()
     #with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
     #   pickle.dump(base_model.solution_ydf, f)
     #exit(0)
