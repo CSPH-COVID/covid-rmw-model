@@ -77,15 +77,19 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
         model.update_tc(tc_list_to_dict(test_tc), replace=False, update_lookup=False)
         model.solve_seir(y0=y0, tstart=tstart, tend=tend)
         return model.solution_sum_Ih(tstart, tend, regions=regions)/max_scale
-    fitted_tc, fitted_tc_cov = spo.curve_fit(
+    fitted_tc, fitted_tc_cov, info_dict, *other = spo.curve_fit(
         f=func,
         xdata=trange,
         ydata=ydata,
         p0=[tc[t][region] for t in tc_ts for region in model.regions],
         bounds=([tc_min] * len(tc_ts) * len(regions), [tc_max] * len(tc_ts) * len(regions)),
-        verbose=2)
+        verbose=2,
+        full_output=True)
     fitted_tc = tc_list_to_dict(fitted_tc)
-    return fitted_tc, fitted_tc_cov
+    # Standard deviation of the estimates for each TC is the square root of the diagonal elements (variances) of each
+    # estimated TC parameter.
+    fitted_tc_sd = tc_list_to_dict(np.sqrt(np.diag(fitted_tc_cov)))
+    return fitted_tc, fitted_tc_sd
 
 
 def __optimize_variants(model: RMWCovidModel, variants:list, tstart:int, tend:int, regions=None, yd_start=None):
@@ -257,6 +261,36 @@ def __single_batch_fit_variant_opt(model: RMWCovidModel, tc_min, tc_max, relevan
 
     return fitted_p, fitted_p_cov
 
+
+def set_tc_for_projection(model: RMWCovidModel, last_n_tc: int = 4):
+    """ Sets the last TC value to the average of last_n_tc values (used for projection).
+    :param model: The model to operate on.
+    :param last_n_tc:
+    :return: Dictionary of original last TC values for each region, to restore later if more fitting will occur.
+    """
+    keys_sorted = sorted(list(model.tc.keys()))
+    last_n_keys = keys_sorted[-last_n_tc:]
+
+    last_tc_dict = {}
+    for region in model.attrs["region"]:
+        avg_tc = np.mean([model.tc[k][region] for k in last_n_keys])
+        last_tc_dict[region] = model.tc[last_n_keys[-1]][region]
+        model.tc[last_n_keys[-1]][region] = avg_tc
+
+    return last_tc_dict
+
+
+def restore_tc(model: RMWCovidModel, last_tc_dict):
+    """ Restores TC values from last_tc_dict, if the last TC value was set for projection.
+    :param model: The model to operate on.
+    :param last_tc_dict: Dictionary keyed by region, containing tc values for the last T key.
+    :return: None
+    """
+    last_key = max(model.tc.keys())
+
+    model.tc[last_key].update(last_tc_dict)
+
+
 def forward_sim_plot(model, outdir, highlight_range=None):
     """Solve the model's ODEs and plot transmission control, and save hosp & TC data to disk
 
@@ -293,6 +327,24 @@ def forward_sim_plot(model, outdir, highlight_range=None):
     plt.close()
     hosps_df.to_csv(get_filepath_prefix(outdir, tags=model.tags) + '_model_fit.csv')
     json.dump(dict(model.tc), open(get_filepath_prefix(outdir, tags=model.tags) + '_model_tc.json', 'w'))
+
+def tc_simulation(model: RMWCovidModel, n_sims: int = 100):
+    """ Sample from the distribution of the last fitted value of TC and simulate possible outcomes.
+    :param model: Model to simulate
+    :return: None
+    """
+    rng = np.random.default_rng(1)
+
+    tc_sd = model.tc_sd
+
+    last_tc_key = max(model.tc.keys())
+
+    for region in model.attrs["region"]:
+        tc_mean = model.tc[last_tc_key][region]
+        tc_std = model.tc_sd[last_tc_key][region]
+
+        # Sample
+        samples = rng.normal(loc=tc_mean, scale=tc_std)
 
 
 def do_single_fit(tc_0=0.75,
@@ -404,12 +456,14 @@ def do_single_fit(tc_0=0.75,
         #                                                           tstart=0,
         #                                                           tend=tend)
 
-        fitted_tc, fitted_tc_cov = __single_batch_fit(model,
-                                                      tc_min=tc_min,
-                                                      tc_max=tc_max,
-                                                      yd_start=yd_start,
-                                                      tstart=tstart,
-                                                      tend=tend)
+        fitted_tc, fitted_tc_sd = __single_batch_fit(model,
+                                                                 tc_min=tc_min,
+                                                                 tc_max=tc_max,
+                                                                 yd_start=yd_start,
+                                                                 tstart=tstart,
+                                                                 tend=tend)
+        # Update TC standard deviation estimates.
+        model.tc_sd.update(fitted_tc_sd)
         model.tags['fit_batch'] = str(i)
 
         logger.info(f'{str(model.tags)}: Transmission control fit {i + 1}/{len(batch_tstarts)} completed in {perf_counter() - t0} seconds: {fitted_tc}')
@@ -425,7 +479,6 @@ def do_single_fit(tc_0=0.75,
         # simulate the model and save a picture of the output
         forward_sim_plot(model, outdir)
 
-    model.tc_cov = fitted_tc_cov
     model.tags['run_type'] = 'fit'
     logger.info(f'{str(model.tags)}: fitted TC: {model.tc}')
     logger.info(f'{str(model.tags)}: fitted Offsets: {model.seed_offsets}')
@@ -534,12 +587,17 @@ def do_variant_optimization_ie(model: RMWCovidModel, outdir:str,  tc_min:float=0
             model.write_specs_to_db()
     return model
 
-def do_variant_optimization(model: RMWCovidModel, outdir:str,  tc_min:float=0.0, tc_max:float=0.99, write_specs=True, **kwargs):
+def do_variant_optimization(model: RMWCovidModel, outdir:str, variants:list = None, tc_min:float=0.0, tc_max:float=0.99, write_specs=True, **kwargs):
     model.solve_seir()
     model.tags["vopt"] = "pre_opt"
     logger.info(f"{str(model.tags)} Generating pre-optimization plot for comparison...")
+
+    if variants is None:
+        variants = model.attrs["variants"]
+
+    logger.info(f"{str(model.tags)} Will optimize variants {variants}.")
     forward_sim_plot(model, outdir)
-    for v1,v2 in pairwise(model.attrs["variant"]):
+    for v1,v2 in pairwise(variants):
         if v1 == "none":
             continue
         logger.info(f"{str(model.tags)} Starting optimization process...")
