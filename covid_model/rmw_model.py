@@ -75,6 +75,7 @@ class RMWCovidModel:
 
         # Transmission Control
         self.__tc = {}
+        self.__tc_sd = {}
         self.tc_t_prev_lookup = []
 
         # Variant Seeds
@@ -947,6 +948,13 @@ class RMWCovidModel:
 
         """
         return self.__tc
+
+    @property
+    def tc_sd(self):
+        """ Standard deviation estimate for each TC parameter. Same format as tc, but only filled during fitting.
+        :return:
+        """
+        return self.__tc_sd
 
     @property
     def seeds(self):

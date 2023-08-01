@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from covid_model.rmw_model import RMWCovidModel
-from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot, do_variant_optimization
+from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot, do_variant_optimization, set_tc_for_projection, restore_tc
 from covid_model.utils import setup, get_filepath_prefix
 from covid_model.analysis.charts import plot_transmission_control
 
@@ -78,14 +78,23 @@ def wrapper_run(args: dict):
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
     base_model = do_single_fit(**base_model_args)
-    base_model.tags["vopt"] = "pre"
+    base_model.tags["tc"] = "normal"
     base_model.solve_seir()
     forward_sim_plot(base_model, outdir=outdir)
+
+    #base_model = RMWCovidModel(base_spec_id=5472)
+    #base_model.prep()
+    #base_model.tags["vopt"] = "pre"
+    old_tc_dict = set_tc_for_projection(model=base_model, last_n_tc=4)
+    base_model.tags["tc"] = "last_4_avg"
+    base_model.solve_seir()
+    forward_sim_plot(base_model, outdir=outdir)
+    #restore_tc(model=base_model, last_tc_dict=old_tc_dict)
     # Optimize variants and write results.
-    base_model = do_variant_optimization(model=base_model, **base_model_args)
-    base_model.solve_seir()
-    base_model.tags["vopt"] = "post"
-    forward_sim_plot(base_model, outdir=outdir)
+    #base_model = do_variant_optimization(model=base_model, variants=["bq","xbb"], **base_model_args)
+    #base_model.solve_seir()
+    #base_model.tags["vopt"] = "post"
+    #forward_sim_plot(base_model, outdir=outdir)
 
     with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf.pkl", "wb") as f:
         pickle.dump(base_model.solution_ydf, f)
@@ -114,8 +123,9 @@ def wrapper_run(args: dict):
     plt.savefig(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.png')
     plt.close()
     hosps_df.to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.csv')
+    restore_tc(base_model, last_tc_dict=old_tc_dict)
     json.dump(base_model.tc, open(get_filepath_prefix(outdir, tags=base_model.tags) + 'model_forecast_tc.json', 'w'))
-    
+    json.dump(base_model.tc_sd, open(get_filepath_prefix(outdir, tags=base_model.tags) + "model_forecast_tc_sd.json", "w"))
     exit(0)
     #scenario_fit_args = {
         #'outdir': outdir,
