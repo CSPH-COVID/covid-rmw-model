@@ -75,7 +75,7 @@ class RMWCovidModel:
 
         # Transmission Control
         self.__tc = {}
-        self.__tc_sd = {}
+        self.__tc_cov = {}
         self.tc_t_prev_lookup = []
 
         # Variant Seeds
@@ -950,11 +950,11 @@ class RMWCovidModel:
         return self.__tc
 
     @property
-    def tc_sd(self):
+    def tc_cov(self):
         """ Standard deviation estimate for each TC parameter. Same format as tc, but only filled during fitting.
         :return:
         """
-        return self.__tc_sd
+        return self.__tc_cov
 
     @property
     def seeds(self):
@@ -1722,7 +1722,7 @@ class RMWCovidModel:
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
         # Build lookup for variant seeds, offset values and scaling values
         # REMOVE THIS
-        offsets_hardcoded = pd.read_csv("/covid_rmw_model/covid_model/input/seeds_offsets_scales_final_maybe.csv", index_col=0)
+        offsets_hardcoded = pd.read_csv("/covid-rmw-model/covid_model/input/seeds_offsets_scales_final_maybe.csv", index_col=0)
         self.__seed_offsets = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_offsets"])}
         self.__seed_scalers = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_scales"])}
 
@@ -2435,6 +2435,17 @@ class RMWCovidModel:
         # JSON can't handle numbers as dict keys
         return {int(key): val for key, val in tc_dict.items()}
 
+    @classmethod
+    def unserialize_tc_cov(cls, tc_cov_dict):
+        return {int(k1):
+                    {k2:
+                         {int(k3):
+                              {k4: v4
+                               for k4,v4 in v3.items()}
+                          for k3,v3 in v2.items()}
+                     for k2, v2 in v1.items()}
+                for k1, v1 in tc_cov_dict.items()}
+
     @staticmethod
     def serialize_y0_dict(y0_dict):
         """Convert a dictionary representing the initial conditions in the model, to a list suitable for json conversion
@@ -2490,7 +2501,7 @@ class RMWCovidModel:
         logger.debug(f"{str(self.tags)} Serializing model to json")
         keys = ['base_spec_id', 'spec_id', 'tags',
                 '_RMWCovidModel__start_date', '_RMWCovidModel__end_date', '_RMWCovidModel__attrs', '_RMWCovidModel__tc',
-                'tc_t_prev_lookup', '_RMWCovidModel__params_defs',
+                'tc_t_prev_lookup', '_RMWCovidModel__params_defs', '_RMWCovidModel__tc_cov',
                 '_RMWCovidModel__region_defs', '_RMWCovidModel__regions', '_RMWCovidModel__vacc_proj_params',
                 '_RMWCovidModel__mobility_mode', 'actual_mobility', 'proj_mobility', 'proj_mobility',
                 '_RMWCovidModel__mobility_proj_params', 'actual_vacc_df', 'proj_vacc_df', 'hosps', #'_RMWCovidModel__hosp_reporting_frac',
@@ -2534,6 +2545,8 @@ class RMWCovidModel:
                 self.__dict__[key] = dt.datetime.strptime(val, "%Y-%m-%d").date()
             elif key == '_RMWCovidModel__tc':
                 self.__dict__[key] = RMWCovidModel.unserialize_tc(val)
+            elif key == "_RMWCovidModel__tc_cov":
+                self.__dict__[key] = RMWCovidModel.unserialize_tc_cov(val)
             elif key in ['actual_vacc_df', 'proj_vacc_df'] and val is not None:
                 self.__dict__[key] = RMWCovidModel.unserialize_vacc(val)
             elif key in ['actual_mobility', 'proj_mobility'] and val is not None:

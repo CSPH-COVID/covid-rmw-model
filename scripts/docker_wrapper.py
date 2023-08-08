@@ -78,17 +78,17 @@ def wrapper_run(args: dict):
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
     base_model = do_single_fit(**base_model_args)
-    base_model.tags["tc"] = "normal"
-    base_model.solve_seir()
-    forward_sim_plot(base_model, outdir=outdir)
+    #base_model = RMWCovidModel(base_spec_id=5505)
+    #base_model.prep(pickle_matrices=False)
+    forward_sim_plot(base_model, outdir=outdir, n_sims=100)
 
     #base_model = RMWCovidModel(base_spec_id=5472)
     #base_model.prep()
     #base_model.tags["vopt"] = "pre"
-    old_tc_dict = set_tc_for_projection(model=base_model, last_n_tc=4)
-    base_model.tags["tc"] = "last_4_avg"
-    base_model.solve_seir()
-    forward_sim_plot(base_model, outdir=outdir)
+    # old_tc_dict = set_tc_for_projection(model=base_model, last_n_tc=4)
+    # base_model.tags["tc"] = "last_4_avg"
+    # base_model.solve_seir()
+    # forward_sim_plot(base_model, outdir=outdir)
     #restore_tc(model=base_model, last_tc_dict=old_tc_dict)
     # Optimize variants and write results.
     #base_model = do_variant_optimization(model=base_model, variants=["bq","xbb"], **base_model_args)
@@ -123,9 +123,9 @@ def wrapper_run(args: dict):
     plt.savefig(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.png')
     plt.close()
     hosps_df.to_csv(get_filepath_prefix(outdir, tags=base_model.tags) + '_model_forecast.csv')
-    restore_tc(base_model, last_tc_dict=old_tc_dict)
+    #restore_tc(base_model, last_tc_dict=old_tc_dict)
     json.dump(base_model.tc, open(get_filepath_prefix(outdir, tags=base_model.tags) + 'model_forecast_tc.json', 'w'))
-    json.dump(base_model.tc_sd, open(get_filepath_prefix(outdir, tags=base_model.tags) + "model_forecast_tc_sd.json", "w"))
+    json.dump(base_model.tc_cov, open(get_filepath_prefix(outdir, tags=base_model.tags) + "model_forecast_tc_cov.json", "w"))
     exit(0)
     #scenario_fit_args = {
         #'outdir': outdir,

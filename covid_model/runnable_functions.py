@@ -8,6 +8,8 @@ import json
 from time import perf_counter
 from itertools import pairwise
 import datetime as dt
+from scipy.stats import norm as sp_norm
+
 """ Third Party Imports """
 from multiprocessing_logging import install_mp_handler
 import pandas as pd
@@ -17,6 +19,7 @@ from matplotlib import pyplot as plt
 from matplotlib.cm import tab10, tab20b, tab20c, tab20
 from matplotlib.patches import Rectangle
 import matplotlib.ticker as mtick
+import seaborn as sns
 """ Local Imports """
 from covid_model import RMWCovidModel
 from covid_model.analysis.charts import plot_transmission_control
@@ -67,6 +70,20 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
                 i += 1
         return tc_dict
 
+    def tc_cov_mat_to_dict(tc_cov):
+        """Converts fitted TC covariance matrix into a dict structure"""
+        i = 0
+        tc_cov_dict = {t: {r: {} for r in regions} for t in tc.keys()}
+        for tc_i in tc.keys():
+            for r_i in regions:
+                j = 0
+                for tc_j in tc.keys():
+                    for r_j in regions:
+                        tc_cov_dict[tc_i][r_i].update({tc_j: {r_j: tc_cov[i, j]}})
+                        j += 1
+                i += 1
+        return tc_cov_dict
+
     def func(trange, *test_tc):
         """A simple wrapper for the model's solve_seir method so that it can be optimzed by curve_fit
         Args:
@@ -88,8 +105,8 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
     fitted_tc = tc_list_to_dict(fitted_tc)
     # Standard deviation of the estimates for each TC is the square root of the diagonal elements (variances) of each
     # estimated TC parameter.
-    fitted_tc_sd = tc_list_to_dict(np.sqrt(np.diag(fitted_tc_cov)))
-    return fitted_tc, fitted_tc_sd
+    fitted_tc_cov = tc_cov_mat_to_dict(fitted_tc_cov)
+    return fitted_tc, fitted_tc_cov
 
 
 def __optimize_variants(model: RMWCovidModel, variants:list, tstart:int, tend:int, regions=None, yd_start=None):
@@ -291,7 +308,7 @@ def restore_tc(model: RMWCovidModel, last_tc_dict):
     model.tc[last_key].update(last_tc_dict)
 
 
-def forward_sim_plot(model, outdir, highlight_range=None):
+def forward_sim_plot(model, outdir, highlight_range=None, n_sims=None, last_n=4):
     """Solve the model's ODEs and plot transmission control, and save hosp & TC data to disk
 
     Args:
@@ -300,6 +317,25 @@ def forward_sim_plot(model, outdir, highlight_range=None):
     # TODO: refactor into charts.py?
     logger.info(f'{str(model.tags)}: Running forward sim')
     fig, axs = plt.subplots(nrows=3, ncols=len(model.regions), figsize=(10*len(model.regions), 18), dpi=300, sharex=True, sharey=False, squeeze=False)
+    # If we are running TC simulations
+    sim_tc_dict = None
+    if n_sims is not None:
+        rng = np.random.default_rng(42)
+        last_n_keys = sorted(model.tc.keys())[-last_n:]
+        n_keys = len(last_n_keys)
+        avg_tcs = []
+        avg_tcs_var = []
+        for region in model.regions:
+            avg_tc = np.mean([model.tc[k][region] for k in last_n_keys])
+            avg_tcs.append(avg_tc)
+            # Covariance of a mean of random variables:
+            # https://stats.stackexchange.com/questions/168971/variance-of-an-average-of-random-variables
+            var_avg_tc = (np.sum([model.tc_cov[k][region][k][region] for k in last_n_keys]) +
+                          2 * np.sum([model.tc_cov[i][region][j][region] for i in last_n_keys for j in last_n_keys if j < i]))
+            var_avg_tc = var_avg_tc/(n_keys**2)
+            avg_tcs_var.append(var_avg_tc)
+        sim_tc = rng.normal(loc=avg_tcs, scale=np.sqrt(avg_tcs_var), size=(n_sims, len(model.regions))).transpose()
+        sim_tc_dict = {r: s for r, s in zip(model.regions, sim_tc)}
     hosps_df = model.modeled_vs_observed_hosps()
     for i, region in enumerate(model.regions):
         # Observed hospitalizations are plotted in their entirety.
@@ -309,9 +345,54 @@ def forward_sim_plot(model, outdir, highlight_range=None):
         fit_end = hosps_df.loc[region, "observed"].isna().idxmax()
         fitted_hosps = region_modeled_hosps.loc[:fit_end]
         axs[0, i].plot(fitted_hosps, label="Modeled Hosp. (Fitted)", color=tab10(1))
-        proj_hosps = region_modeled_hosps.loc[fit_end:]
-        if len(proj_hosps) > 0:
-            axs[0, i].plot(proj_hosps, label="Modeled Hosp. (Projection)", color=tab10(1), linestyle="--")
+        if n_sims is not None:
+            last_key = last_n_keys[-1]
+            #orig_tc_dict = copy.deepcopy(model.tc)
+            sim_df = {}
+            for s_i, sim_tc in enumerate(sim_tc_dict[region]):
+                model.update_tc({last_key+1: {region: sim_tc}}, replace=False)
+                model.solve_seir(tstart=last_key, y0=model.solution_y[last_key-1])
+                sim_df[s_i] = model.solution_sum_Ih()[last_key:]
+                logger.info(f"{str(model.tags)}: Finished {s_i+1} of {n_sims} simulations.")
+            model.update_tc({last_key+1: {region: avg_tcs[i]}}, replace=False)
+            sim_df = pd.DataFrame(sim_df)
+
+            xmin = min(sim_tc_dict[region]) - 0.02
+            xmax = max(sim_tc_dict[region]) + 0.02
+
+            norm_pdf_x = np.linspace(xmin, xmax, 1000)
+            norm_pdf = sp_norm(loc=avg_tcs[i], scale=np.sqrt(avg_tcs_var[i])).pdf
+
+            ds_fig, ds_ax = plt.subplots(figsize=(10,10))
+            ds_ax.hist(sim_tc_dict[region], density=True, bins="auto", color=tab20(1), label="Sampled TC Histogram")
+            ds_ax.plot(norm_pdf_x, norm_pdf(norm_pdf_x), linewidth=3, color=tab20(0), label=f"PDF of N({avg_tcs[i]},{avg_tcs_var[i]})")
+            ds_ax.set_xlim(xmin,xmax)
+            ds_ax.set_ylabel("Relative Likelihood")
+            ds_ax.legend(fancybox=False, edgecolor="black")
+            ds_ax.set_title("Distribution of Sampled TC")
+            ds_fig.tight_layout()
+            ds_fig.savefig(get_filepath_prefix(outdir, tags=model.tags) + f"_{region}_tc_dist.png")
+            plt.close(ds_fig)
+            sim_df_tmp = sim_df.set_index(pd.date_range(model.t_to_date(last_key), periods=len(sim_df)))
+            sim_df_tmp.to_csv(get_filepath_prefix(outdir, tags=model.tags) + f"_{region}_sim_df.csv")
+            # first_sim = True
+            # for c in sim_df_tmp:
+            #     axs[0,i].plot(sim_df_tmp[c], label="Modeled Hosp. (Simulated)" if first_sim else None, alpha=0.05, color=tab10(1), linewidth=0.5)
+            #     first_sim = False
+            #
+            # axs[0, i].plot(sim_df_tmp.mean(axis=1), label="Modeled Hosp. (Mean Simulated)", color=tab10(1),
+            #                linestyle="--")
+
+            sns_df = sim_df_tmp.melt(ignore_index=False, value_name="sim_hosps",
+                                     var_name="sim_num").reset_index().rename(columns={"index": "date"})
+
+            sns.lineplot(data=sns_df, x="date", y="sim_hosps", errorbar="pi", ax=axs[0, i], color=tab10(1),
+                         linestyle="--", label="Modeled Hosp (Simulated)")
+
+        else:
+            proj_hosps = region_modeled_hosps.loc[fit_end:]
+            if len(proj_hosps) > 0:
+                axs[0, i].plot(proj_hosps, label="Modeled Hosp. (Projection)", color=tab10(1), linestyle="--")
         #hosps_df.loc[region].plot(ax=axs[0, i])
         axs[0,i].title.set_text(f'Hospitalizations: {region}')
         axs[0,i].legend(fancybox=False, edgecolor="black")
@@ -322,9 +403,14 @@ def forward_sim_plot(model, outdir, highlight_range=None):
         axs[1, i].title.set_text(f'TC: {region}')
         plot_variant_proportions(model,ax=axs[2,i])
         #axs[2,i].legend()
-    plt.tight_layout()
-    plt.savefig(get_filepath_prefix(outdir, tags=model.tags) + '_model_fit.png')
-    plt.close()
+    fig.tight_layout()
+    fig.savefig(get_filepath_prefix(outdir, tags=model.tags) + '_model_fit.png')
+    if n_sims is not None:
+        for ax_i in range(len(model.regions)):
+            axs[0,ax_i].set_xlim(pd.to_datetime("2023-01-01"), max(sim_df_tmp.index))
+        fig.tight_layout()
+        fig.savefig(get_filepath_prefix(outdir, tags=model.tags) + "_model_fit_2023.png")
+    plt.close(fig)
     hosps_df.to_csv(get_filepath_prefix(outdir, tags=model.tags) + '_model_fit.csv')
     json.dump(dict(model.tc), open(get_filepath_prefix(outdir, tags=model.tags) + '_model_tc.json', 'w'))
 
@@ -335,13 +421,13 @@ def tc_simulation(model: RMWCovidModel, n_sims: int = 100):
     """
     rng = np.random.default_rng(1)
 
-    tc_sd = model.tc_sd
+    tc_sd = model.tc_cov
 
     last_tc_key = max(model.tc.keys())
 
     for region in model.attrs["region"]:
         tc_mean = model.tc[last_tc_key][region]
-        tc_std = model.tc_sd[last_tc_key][region]
+        tc_std = model.tc_cov[last_tc_key][region]
 
         # Sample
         samples = rng.normal(loc=tc_mean, scale=tc_std)
@@ -456,14 +542,14 @@ def do_single_fit(tc_0=0.75,
         #                                                           tstart=0,
         #                                                           tend=tend)
 
-        fitted_tc, fitted_tc_sd = __single_batch_fit(model,
-                                                                 tc_min=tc_min,
-                                                                 tc_max=tc_max,
-                                                                 yd_start=yd_start,
-                                                                 tstart=tstart,
-                                                                 tend=tend)
+        fitted_tc, fitted_tc_cov = __single_batch_fit(model,
+                                                     tc_min=tc_min,
+                                                     tc_max=tc_max,
+                                                     yd_start=yd_start,
+                                                     tstart=tstart,
+                                                     tend=tend)
         # Update TC standard deviation estimates.
-        model.tc_sd.update(fitted_tc_sd)
+        model.tc_cov.update(fitted_tc_cov)
         model.tags['fit_batch'] = str(i)
 
         logger.info(f'{str(model.tags)}: Transmission control fit {i + 1}/{len(batch_tstarts)} completed in {perf_counter() - t0} seconds: {fitted_tc}')
