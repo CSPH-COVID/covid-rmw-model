@@ -67,6 +67,7 @@ def wrapper_run(args: dict):
         'tags': {"region": instance_region},
         'outdir': outdir,
         'pickle_matrices': False,
+        'tc_0': 1.0
         #'pre_solve_model': True,
         #'tc_window_size': 30,
         #'tc_window_batch_size': 3,

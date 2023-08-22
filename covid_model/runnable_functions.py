@@ -28,7 +28,7 @@ from covid_model.analysis.charts import plot_modeled, plot_observed_hosps, plot_
 logger = IndentLogger(logging.getLogger(''), {})
 
 
-def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tstart=None, tend=None, regions=None):
+def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tstart=None, tend=None, regions=None, last_tc=None):
     """function to fit TC for a single batch of time for a model
     Only TC values which lie in the specified regions between tstart and tend will be fit.
     Args:
@@ -54,6 +54,14 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
     # Min-max scaling (scales to [0,1])
     max_scale = ydata.max()
     ydata = ydata / max_scale
+    # For initial values, either use the default TC or use last fitted value of TC as a guess.
+    if last_tc is None:
+        init_p = [tc[t][region] for t in tc_ts for region in model.regions]
+    else:
+        max_last_t = max(last_tc.keys())
+        init_p = [last_tc[min(t,max_last_t)][region] for t in tc_ts for region in model.regions]
+    logger.info(f"{str(model.tags)}: Using initial TC guesses: {init_p}.")
+
     def tc_list_to_dict(tc_list):
         """convert tc output of curve_fit to a dict like in our model.
         curve_fit assumes you have a function which accepts a vector of inputs. So it will provide guesses for TC as a
@@ -98,9 +106,11 @@ def __single_batch_fit(model: RMWCovidModel, tc_min, tc_max, yd_start=None, tsta
         f=func,
         xdata=trange,
         ydata=ydata,
-        p0=[tc[t][region] for t in tc_ts for region in model.regions],
-        bounds=([tc_min] * len(tc_ts) * len(regions), [tc_max] * len(tc_ts) * len(regions)),
+        p0=init_p,
+        #bounds=([tc_min] * len(tc_ts) * len(regions), [tc_max] * len(tc_ts) * len(regions)),
+        bounds=((tc_min) * len(tc_ts) * len(regions), [np.inf] * len(tc_ts) * len(regions)),
         verbose=2,
+        method="trf",
         full_output=True)
     fitted_tc = tc_list_to_dict(fitted_tc)
     # Standard deviation of the estimates for each TC is the square root of the diagonal elements (variances) of each
@@ -396,10 +406,11 @@ def forward_sim_plot(model, outdir, highlight_range=None, n_sims=None, last_n=4)
         #hosps_df.loc[region].plot(ax=axs[0, i])
         axs[0,i].title.set_text(f'Hospitalizations: {region}')
         axs[0,i].legend(fancybox=False, edgecolor="black")
-        plot_transmission_control(model, [region], ax=axs[1,i])
         if highlight_range is not None:
             lb,ub = highlight_range
             axs[0,i].axvspan(xmin=lb,xmax=ub,color="gray",alpha=0.5)
+        # TC/Beta Plot
+        plot_transmission_control(model=model, ax=axs[1,i], regions=[region])
         axs[1, i].title.set_text(f'TC: {region}')
         plot_variant_proportions(model,ax=axs[2,i])
         #axs[2,i].legend()
@@ -448,6 +459,7 @@ def do_single_fit(tc_0=0.75,
                   outdir=None,
                   write_results=True,
                   write_batch_results=False,
+                  use_fitted_tc_as_initial_guess=False,
                   model_class=RMWCovidModel,
                   **model_args):
     """ Fits TC for the model between two dates, and does the fit in batches to make the solving easier
@@ -547,7 +559,8 @@ def do_single_fit(tc_0=0.75,
                                                      tc_max=tc_max,
                                                      yd_start=yd_start,
                                                      tstart=tstart,
-                                                     tend=tend)
+                                                     tend=tend,
+                                                     last_tc=None if ((i == 0) or (not use_fitted_tc_as_initial_guess)) else fitted_tc)
         # Update TC standard deviation estimates.
         model.tc_cov.update(fitted_tc_cov)
         model.tags['fit_batch'] = str(i)

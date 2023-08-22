@@ -3,7 +3,7 @@
     "param": "betta",
     "attrs": null,
     "vals": {
-      "2020-01-01": 0.3329
+      "2020-01-01": 1.0
     },
     "desc": "transmission rate (product of transmission-relevant contact and probability of infection given that contact)"
   },

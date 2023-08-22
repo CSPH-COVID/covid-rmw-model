@@ -1187,7 +1187,8 @@ class RMWCovidModel:
         Ih = np.concatenate([self.solution_y[tstart:(tend + 1), self.Ih_compartments & (region_levels == region)].sum(axis=1) for region in regions])
         return Ih
 
-    def solution_var_props(self,tstart,tend,variants):
+    def solution_var_props(self,tstart=0,tend=None,variants=None):
+        variants = variants if variants is not None else [x for x in self.attrs["variant"] if x != "none"]
         all_variants = self.attrs["variant"]
         idx_rearr = {v:i for i,v in enumerate(all_variants)}
         variant_idcs = self.variant_compartments
@@ -2206,7 +2207,8 @@ class RMWCovidModel:
         t_int = math.floor(t)
         t_last = self.t_prev_lookup[t_int]
         t_tc = self.tc_t_prev_lookup[t_int]
-        nlm = [(1 - self.__tc[t_tc][region]) for region in self.regions]
+        #nlm = [(1 - self.__tc[t_tc][region]) for region in self.regions]
+        nlm = [self.__tc[t_tc][region] for region in self.regions]
         nlm_vec = self.region_picker_matrix.dot(nlm)
 
         # apply linear terms
