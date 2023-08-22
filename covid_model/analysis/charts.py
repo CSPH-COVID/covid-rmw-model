@@ -3,7 +3,7 @@ import os
 from time import perf_counter
 import datetime as dt
 from os.path import join
-
+from itertools import product
 """ Third Party Imports """
 import seaborn as sns
 import numpy as np
@@ -74,13 +74,53 @@ def plot_modeled_by_group(model, axs, compartment='Ih', **plot_params):
         ax.set_xlabel('')
 
 
-def plot_transmission_control(model, regions=None, **plot_params):
+def plot_transmission_control(model, ax, regions=None):
+    use_variants = sorted(list(set(model.attrs["variant"]) - {"none"}))
+    color_idx = {v: (2 * iv) for iv, v in enumerate(use_variants)}
+    # Use all regions by default, but can be overwritten if passed as argument.
+    regions = model.regions if regions is None else regions
     # need to extend one more time period to see the last step. Assume it's the same gap as the second to last step
     tc_df = pd.DataFrame.from_dict(model.tc, orient='index').set_index(
         np.array([model.t_to_date(t) for t in model.tc.keys()]))
-    if regions is not None:
-        tc_df = tc_df[regions]  # regions should be a list
-    tc_df.plot(drawstyle="steps-post", xlim=(model.start_date, model.end_date), **plot_params)
+    # Subset to just the regions we want to plot
+    tc_df = tc_df[regions]  # regions should be a list
+    # Get the scaling values for each variant in each region (assumes that betta *only* varies between variants and
+    # regions, and not other attributes).
+    beta_scale = model.get_param_for_attrs_by_t(param="betta",
+                                                attrs=dict(variant=[x for x in model.attrs["variant"] if x != "none"],
+                                                           region=[x for x in regions]))\
+        .unstack(level=["region","variant"])\
+        .droplevel(["age","immun","vacc"],axis=0)\
+        .droplevel(level=0,axis=1)\
+        .drop_duplicates()
+    # If a level (i.e. compartment level like age, variant, etc) has a value that never changes, we don't need to
+    # plot that level.
+    # special_lvls = {"t","region"}
+    # lvls_to_drop = {name for name in beta_scale.index.names if beta_scale.groupby(name).ngroups == 1 and name not in special_lvls} - {"region"}
+    # unstack_lvls = ["region"] + list(set(beta_scale.index.names) - lvls_to_drop - special_lvls)
+    # beta_scale = beta_scale.droplevel(level=list(lvls_to_drop),axis=0).unstack(unstack_lvls)
+    beta_scale.index = pd.Index([model.t_to_date(t) for t in beta_scale.index],name="date")
+    beta_scale = beta_scale.reindex(pd.date_range(model.start_date, model.end_date)).ffill()
+    #
+    # Multiply by beta (tc) df so that we get the effective beta at each timestep.
+    beta_scaled_t = tc_df.reindex(pd.date_range(model.start_date,model.end_date)).multiply(beta_scale,axis=1,level="region").dropna()
+    # Compute a mask for each variant, so we don't plot the effective beta for variants we don't care about anymore
+    var_starts = {v: pd.to_datetime(model.t_to_date(int(np.argmax(np.array(model.seeds[regions[0]][f"{v}_seed"]))))) for v in use_variants}
+    sol_var_props_r = np.flip(model.solution_var_props(model.tstart, model.tend, use_variants).reshape(len(use_variants),-1),axis=-1)
+    v_ends = sol_var_props_r.shape[1] - np.argmax(sol_var_props_r > 0, axis=-1)
+    var_ends = {v: pd.to_datetime(model.t_to_date(int(v_ends[i]))) for i,v in enumerate(use_variants)}
+    for region in regions:
+        ax.step(tc_df.index, tc_df[region], where="post", label=f"Base Beta ({region})", color="black", linestyle="--", zorder=999)
+        for variant in use_variants:
+            masked_beta_t = beta_scaled_t.loc[(beta_scaled_t.index >= var_starts[variant]) & (beta_scaled_t.index <= var_ends[variant]), (region, variant)]
+            if len(masked_beta_t) != 0:
+                ax.step(masked_beta_t.index,
+                        masked_beta_t,
+                        where="post",
+                        label=f"Scaled Beta ({region}, {variant})",
+                        color=tab20(color_idx[variant]))
+    ax.legend(fancybox=False, edgecolor="black")
+    #tc_df.plot(drawstyle="steps-post", xlim=(model.start_date, model.end_date), **plot_params)
 
 def plot_variant_proportions(model, ax, show_seeds=None):
     # Plot variant proportions
