@@ -1,4 +1,5 @@
 """ Python Standard Library """
+import datetime
 import json
 import math
 import datetime as dt
@@ -99,6 +100,7 @@ class RMWCovidModel:
         self.params_trange = None
         self.solution_y = None
         self.graph = None
+        self.tag_coefs = None
 
         # data related params
         self.__params_defs = None # default params
@@ -501,7 +503,7 @@ class RMWCovidModel:
             #date_level = hosps.index.get_level_values("date") - pd.Timedelta(days=6)
             date_level = hosps.index.get_level_values("date")
             #hosps = hosps.reset_index(level="date",drop=True).set_index(date_level,append=True)
-            hosps = hosps.reindex(pd.MultiIndex.from_product([self.regions, pd.date_range(min(date_level), max(date_level), freq="D")],names=["region", "date"]),fill_value=0)\
+            hosps = hosps.reindex(pd.MultiIndex.from_product([self.regions, pd.date_range(min(date_level), min(max(date_level) + pd.Timedelta(days=6), datetime.datetime.now()), freq="D")],names=["region", "date"]),fill_value=0)\
                 .groupby("region")\
                 .rolling(7,min_periods=1)\
                 .mean()\
@@ -1723,12 +1725,14 @@ class RMWCovidModel:
         self.t_prev_lookup = {t_int: max(t for t in self.params_trange if t <= t_int) for t_int in self.trange}
         # Build lookup for variant seeds, offset values and scaling values
         # REMOVE THIS
-        offsets_hardcoded = pd.read_csv("/covid_rmw_model/covid_model/input/seeds_offsets_scales_final_maybe.csv", index_col=0)
-        self.__seed_offsets = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_offsets"])}
-        self.__seed_scalers = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_scales"])}
+        #offsets_hardcoded = pd.read_csv("covid_model/input/seeds_offsets_scales_final_maybe.csv", index_col=0)
+        #self.__seed_offsets = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_offsets"])}
+        #self.__seed_scalers = {f"{k}_seed": v for k,v in zip(offsets_hardcoded.index,offsets_hardcoded["seed_scales"])}
 
-        #self.__seed_offsets = {f"{variant}_seed":0 for variant in self.attrs["variant"] if variant != "none"}
-        #self.__seed_scalers = {f"{variant}_seed":1.0 for variant in self.attrs["variant"] if variant != "none"}
+        if self.__seed_offsets == {}:
+            self.__seed_offsets = {f"{variant}_seed":0 for variant in self.attrs["variant"] if variant != "none"}
+        if self.__seed_scalers == {}:
+            self.__seed_scalers = {f"{variant}_seed":1.0 for variant in self.attrs["variant"] if variant != "none"}
 
         for region in self.attrs["region"]:
             self.__seeds[region] = {}
@@ -1746,6 +1750,11 @@ class RMWCovidModel:
                     seed_arr[t:] = val
                 self.__seeds[region][seed_string] = seed_arr
 
+        if self.tag_coefs is None:
+            self.tag_coefs = {variant: float(
+                self.get_param_for_attrs_by_t(param="betta",
+                                              attrs={"variant":variant}).iloc[0,0])
+                for variant in self.attrs["variant"] if variant != "none"}
 
     def update_tc(self, tc, replace=True, update_lookup=True):
         """set TC at different points in time, and update the lookup dictionary that quickly determines which TC is relevant for a given time
@@ -1779,6 +1788,9 @@ class RMWCovidModel:
 
     def update_seed_scalers(self, scalers: dict):
         self.seed_scalers.update(scalers)
+
+    def update_tag_coefs(self, ie: dict):
+        self.tag_coefs.update(ie)
 
     def _default_nonlinear_matrix(self):
         """A function that constructs an empty nonlinear matrix with the correct dimensions.
@@ -1885,7 +1897,7 @@ class RMWCovidModel:
         else:
             return {t: coef for t in self.params_trange}
 
-    def add_flow_from_cmpt_to_cmpt(self, from_cmpt, to_cmpt, from_coef=None, to_coef=None, from_to_coef=None, scale_by_cmpts=None, scale_by_cmpts_coef=None, constant=None, graph=None):
+    def add_flow_from_cmpt_to_cmpt(self, from_cmpt, to_cmpt, from_coef=None, to_coef=None, from_to_coef=None, scale_by_cmpts=None, scale_by_cmpts_coef=None, constant=None, graph=None, tag=None):
         """add a flow term, and add new flow to ODE matrices
 
         Depending on the passed arguments, a term will be added to either the constant vector, linear matrix, or one or
@@ -1963,11 +1975,11 @@ class RMWCovidModel:
             # add term to matrices
             for t in self.params_trange:
                 term.add_to_linear_matrix(self.linear_matrix[t], t)
-                term.add_to_nonlinear_matrices(self.nonlinear_matrices[t], t)
+                term.add_to_nonlinear_matrices(self.nonlinear_matrices[t], t, tag=tag)
                 #term.add_to_constant_vector(self.constant_vector[t], t)
 
 
-    def add_flows_from_attrs_to_attrs(self, from_attrs, to_attrs, from_coef=None, to_coef=None, from_to_coef=None, scale_by_attrs=None, scale_by_coef=None, constant=None, graph=None):
+    def add_flows_from_attrs_to_attrs(self, from_attrs, to_attrs, from_coef=None, to_coef=None, from_to_coef=None, scale_by_attrs=None, scale_by_coef=None, constant=None, graph=None, tag=None):
         """add  flows from one set of compartments to another set of compartments
 
         The "from" compartments are all compartments matching the attributes specified in from_attrs
@@ -2012,10 +2024,10 @@ class RMWCovidModel:
             to_cmpts = self.update_cmpt_tuple_with_attrs(from_cmpt, to_attrs)
             for to_cmpt in to_cmpts:
                 self.add_flow_from_cmpt_to_cmpt(from_cmpt, to_cmpt, from_coef=from_coef, to_coef=to_coef, from_to_coef=from_to_coef, scale_by_cmpts=scale_by_cmpts,
-                                                scale_by_cmpts_coef=scale_by_coef, constant=constant, graph=graph)
+                                                scale_by_cmpts_coef=scale_by_coef, constant=constant, graph=graph, tag=tag)
 
 
-    def build_ode_flows(self,graph_trace=True):
+    def build_ode_flows(self,graph_trace=False):
         """Create all the flows that should be in the model, to represent the different dynamics we are modeling
 
         """
@@ -2069,10 +2081,10 @@ class RMWCovidModel:
             # No mobility between regions (or a single region)
             if self.mobility_mode is None or self.mobility_mode == "none":
                 for region in self.attrs['region']:
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb * betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph)
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='betta', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph)
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="lamb * betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph)
-                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="betta", from_coef=f'immunity * kappa / region_pop', from_to_coef='immune_escape', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='lamb', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph,tag=variant)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef='1', from_coef=f'(1 - immunity) * kappa / region_pop', scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph,tag=variant)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="lamb", from_coef=f'immunity * kappa / region_pop', from_to_coef="immune_escape", scale_by_attrs={'seir': 'I', 'variant': variant, 'region': region},graph=graph,tag=variant)
+                    self.add_flows_from_attrs_to_attrs({'seir': 'S', 'region': region}, {'seir': 'E', 'variant': variant}, to_coef="1", from_coef=f'immunity * kappa / region_pop', from_to_coef="immune_escape", scale_by_attrs={'seir': 'A', 'variant': variant, 'region': region},graph=graph,tag=variant)
             # Transmission parameters attached to the susceptible population
             elif self.mobility_mode == "population_attached":
                 for infecting_region in self.attrs['region']:
@@ -2215,8 +2227,9 @@ class RMWCovidModel:
         dy += (self.linear_matrix[t_last]).dot(y)
 
         # apply non-linear terms
-        for scale_by_cmpt_idxs, matrix in self.nonlinear_matrices[t_last].items():
-            dy += nlm_vec * sum(itemgetter(*scale_by_cmpt_idxs)(y)) * matrix.dot(y)
+        for (tag, scale_by_cmpt_idxs), matrix in self.nonlinear_matrices[t_last].items():
+            tag_coef = self.tag_coefs[tag]
+            dy += nlm_vec * tag_coef * sum(itemgetter(*scale_by_cmpt_idxs)(y)) * matrix.dot(y)
 
         # TODO: Constant terms are ONLY used for the seeding, so we just need to replace this constant vector.
         # apply constant terms
@@ -2245,7 +2258,7 @@ class RMWCovidModel:
                 # the 'seir' (which should be E instead of S) and 'variant' (which should be the current variant).
                 # We could hardcode the values of the tuple, but this would break if we add different attributes in the
                 # future. It doesn't seem like this adds significant computational overhead.
-                to_cmpt = tuple("E" if n == "seir" else variant if n == "variant" else v for n, v in zip(self.attrs, from_cmpt))
+                to_cmpt = tuple("I" if n == "seir" else variant if n == "variant" else v for n, v in zip(self.attrs, from_cmpt))
                 # Look up the index of the exposed compartment.
                 to_cmpt_idx = self.cmpt_idx_lookup[to_cmpt]
                 # Find a time key less than or equal to the current T value.
@@ -2509,7 +2522,7 @@ class RMWCovidModel:
                 '_RMWCovidModel__mobility_proj_params', 'actual_vacc_df', 'proj_vacc_df', 'hosps', #'_RMWCovidModel__hosp_reporting_frac',
                 '_RMWCovidModel__y0_dict', '_RMWCovidModel__seeds', '_RMWCovidModel__seed_offsets',
                 '_RMWCovidModel__seed_scalers', '_RMWCovidModel__voffset_max', '_RMWCovidModel__soffset_max',
-                'max_step_size', 'ode_method']
+                'tag_coefs', 'max_step_size', 'ode_method']
         # add in proj_mobility
         serial_dict = OrderedDict()
         for key in keys:

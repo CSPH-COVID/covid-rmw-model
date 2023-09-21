@@ -47,7 +47,7 @@ class ODEFlowTerm:
         """
         pass
 
-    def add_to_nonlinear_matrices(self, matrices: list, t_int):
+    def add_to_nonlinear_matrices(self, matrices: list, t_int, tag=None):
         """Update the provided dictionary of matrices representing nonlinear flows to include this flow term
 
         matrices is a dictionary whos keys are a tuple representing all scaling compartments, and values are the matrices which give the linear combination of existing compartments
@@ -182,7 +182,7 @@ class ScaledODEFlowTerm(ODEFlowTerm):
         """
         return y[self.from_cmpt_idx] * self.coef_by_t[t_int] * sum(itemgetter(*self.scale_by_cmpts_idxs)(y))
 
-    def add_to_nonlinear_matrices(self, matrices, t_int):
+    def add_to_nonlinear_matrices(self, matrices, t_int, tag=None):
         """Update the provided dictionary of matrices representing nonlinear flows to include this flow term
 
         matrices is a dictionary whos keys are a tuple representing all scaling compartments, and values are the matrices which give the linear combination of existing compartments
@@ -192,9 +192,11 @@ class ScaledODEFlowTerm(ODEFlowTerm):
             matrices: dictionary of matrices to update
             t_int: time at which to update the matrices
         """
+        # If a tag is specified, it becomes part of the key
+        matrix_key = tuple(self.scale_by_cmpts_idxs) if tag is None else (tag, tuple(self.scale_by_cmpts_idxs))
         if self.coef_by_t[t_int] != 0:
-            matrices[tuple(self.scale_by_cmpts_idxs)][self.from_cmpt_idx, self.from_cmpt_idx] -= self.coef_by_t[t_int]
-            matrices[tuple(self.scale_by_cmpts_idxs)][self.to_cmpt_idx, self.from_cmpt_idx] += self.coef_by_t[t_int]
+            matrices[matrix_key][self.from_cmpt_idx, self.from_cmpt_idx] -= self.coef_by_t[t_int]
+            matrices[matrix_key][self.to_cmpt_idx, self.from_cmpt_idx] += self.coef_by_t[t_int]
 
 
 class WeightedScaledODEFlowTerm(ODEFlowTerm):
@@ -220,7 +222,7 @@ class WeightedScaledODEFlowTerm(ODEFlowTerm):
         return y[self.from_cmpt_idx] * self.coef_by_t[t_int] * sum(
             a * b for a, b in zip(itemgetter(*self.scale_by_cmpts_idxs)(y), self.scale_by_cmpts_coef_by_t[t_int]))
 
-    def add_to_nonlinear_matrices(self, matrices, t_int):
+    def add_to_nonlinear_matrices(self, matrices, t_int, tag=None):
         """Update the provided dictionary of matrices representing nonlinear flows to include this flow term
 
         matrices is a dictionary whos keys are a tuple representing all scaling compartments, and values are the matrices which give the linear combination of existing compartments

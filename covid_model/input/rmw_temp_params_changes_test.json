@@ -186,9 +186,9 @@
       "age": "0-17"
     },
     "vals": {
-      "2020-01-01": 8.666667,
-      "2020-12-01": 5.526147,
-      "2021-12-01": 4.870479
+      "2020-01-01": 8.67,
+      "2020-12-01": 5.54,
+      "2021-12-01": 4.67
     },
     "desc": "hospital length of stay in days among 0-17 (CO)"
   },
@@ -198,9 +198,9 @@
       "age": "18-64"
     },
     "vals": {
-      "2020-01-01": 8.318033,
-      "2020-12-01": 8.192808,
-      "2021-12-01": 6.301076
+      "2020-01-01": 8.17,
+      "2020-12-01": 8.22,
+      "2021-12-01": 6.25
     },
     "desc": "hospital length of stay in days among 18-64 (CO)"
   },
@@ -210,9 +210,9 @@
       "age": "65+"
     },
     "vals": {
-      "2020-01-01": 9.919149,
-      "2020-12-01": 9.846983,
-      "2021-12-01": 6.304208
+      "2020-01-01": 9.93,
+      "2020-12-01": 9.82,
+      "2021-12-01": 6.35
     },
     "desc": "hospital length of stay in days among 65+ (CO)"
   },
@@ -733,34 +733,6 @@
       "2020-01-01": 5.35
     },
     "desc": "wildtype has an incubation period of 2.5 days"
-  },
-  {
-    "param": "alpha",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 0.6
-    },
-    "desc": "Omicrons have 40% shorter incubation periods than wildtype"
-  },
-  {
-    "param": "gamm",
-    "attrs": {
-      "variant": [
-        "omicron",
-        "ba2",
-        "ba45"
-      ]
-    },
-    "mults": {
-      "2020-01-01": 1.66667
-    },
-    "desc": "Omicrons have 67% higher recovery rates (i.e. shorter infectious periods) than wildtype"
   },
   {
     "param": "hosp",
