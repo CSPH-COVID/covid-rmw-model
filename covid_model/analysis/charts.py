@@ -122,6 +122,57 @@ def plot_transmission_control(model, ax, regions=None):
     ax.legend(fancybox=False, edgecolor="black")
     #tc_df.plot(drawstyle="steps-post", xlim=(model.start_date, model.end_date), **plot_params)
 
+def plot_beta_r(model, ax):
+    # TODO fix this
+    fig, ax = plt.subplots(figsize=(24, 40), nrows=5, sharex=True)
+
+    # for c in effective_beta.columns:
+    #     plot_eff_beta = effective_beta.loc[(effective_beta.index >= first_appear[c]) & (effective_beta.index <= last_appear[c]),c]
+    #     ax[0].plot(plot_eff_beta.index, plot_eff_beta, label=c,)
+    # ax[0].scatter(plot_eff_beta.index, plot_eff_beta)
+    ax[0].set_title("$\\beta_{base}$ (Fitted Parameter) over Time")
+    ax[0].step(beta.index, beta["beta"], color="black", label="Base Beta", where="post")
+    ax[0].set_ylabel("Base Beta ($\\beta_{base}$)")
+
+    ax[1].set_title("$\\beta_{mult}$ (Variant Multiplier * Lambda Weighted Avg.) over Time")
+    for i, (_, c) in enumerate(effective_beta_mult.columns):
+        relevant_region = (effective_beta_mult.index >= first_appear[c]) & (effective_beta_mult.index <= last_appear[c])
+        plot_efb = effective_beta_mult[("beta", c)]
+        ax[1].plot(plot_efb.index, plot_efb, color=tab10(i), linestyle="--", alpha=0.4)
+        ax[1].plot(plot_efb.index, plot_efb.mask(~relevant_region), color=tab10(i), linewidth=2,
+                   label=f"$\\beta_{{mult}}$ ({c})")
+        # ax[1].plot(beta_mults.index,beta_mults[c],color=tab10(i),alpha=0.4,linestyle="--")
+        # ax[1].plot(beta_mults.index,3.125* beta_mults[c],color=tab10(i),alpha=0.4,linestyle="--")
+    ax[1].legend(fancybox=False, edgecolor="black")
+    ax[1].set_ylabel("Beta Multiplier ($\\beta_{mult}$)")
+
+    ax[2].set_title("Variant Proportions over Time")
+    for i, c in enumerate(inf_share_per_variant.columns):
+        ax[2].plot(inf_share_per_variant.index, inf_share_per_variant[c], color=tab10(i), label=c, linewidth=2)
+    ax[2].legend(fancybox=False, edgecolor="black")
+    ax[2].set_ylabel("Variant Proportions")
+
+    ax[3].plot(weighted_effective_beta.index, weighted_effective_beta, linewidth=2, color="black",
+               label="Weighted $\\beta_{e}$")
+    ax[3].stackplot(effective_beta_weights.index, effective_beta_weights.T,
+                    labels=[f"{c} Contribution" for c in effective_beta_weights.columns], alpha=0.4)
+    ax[3].legend(fancybox=False, edgecolor="black")
+    ax[3].set_ylabel("Beta")
+    ax[3].set_title("$\\beta_e$ (Effective Beta) with Weighted Average")
+    ax[3].set_ylabel("Effective Beta ($\\beta_{e}$)")
+
+    ax[4].plot(weighted_effective_beta.index, weighted_effective_beta / gamm, linewidth=2, color="black",
+               label="Weighted $R_{e}$")
+    ax[4].stackplot(effective_beta_weights.index, effective_beta_weights.T / gamm,
+                    labels=[f"{c} Contribution" for c in effective_beta_weights.columns], alpha=0.4)
+    ax[4].axhline(1.0, linestyle="--", alpha=0.5, color="black")
+    ax[4].set_yticks([0, 1, 2, 4, 6, 8, 10])
+    ax[4].set_ylabel("Effective R ($R_{e}$)")
+    ax[4].legend(fancybox=False, edgecolor="black")
+    ax[4].set_title("$R_e$ (Effective R) with Weighted Average")
+
+    fig.tight_layout()
+
 def plot_variant_proportions(model, ax, show_seeds=None):
     # Plot variant proportions
     use_variants = sorted(list(set(model.attrs["variant"]) - {"none"}))

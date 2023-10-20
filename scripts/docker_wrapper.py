@@ -78,13 +78,13 @@ def wrapper_run(args: dict):
         # MODEL FITTING
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
-    #base_model = do_single_fit(**base_model_args)
+    base_model = do_single_fit(**base_model_args)
     #CON
-    base_model = RMWCovidModel(base_spec_id=5562)
+    #base_model = RMWCovidModel(base_spec_id=5562)
     #COE
     #base_model = RMWCovidModel(base_spec_id=5559)
     # Prep and solve model for initial state
-    base_model.prep(pickle_matrices=False)
+    #base_model.prep(pickle_matrices=False)
     base_model.solve_seir()
     fit_end_date = pd.to_datetime(base_model_args["fit_end_date"]).date()
     forward_sim_plot(base_model, outdir=outdir, fit_end=fit_end_date)
