@@ -1,8 +1,8 @@
 {
-  "base_model_fit_end_date": "2023-06-25",
-  "end_date": "2023-10-01",
+  "base_model_fit_end_date": "2023-09-24",
+  "end_date": "2023-11-01",
   "regions": [
-    "ute"
+    "cow"
   ],
   "report_start_date": "2021-10-28",
   "report_variants": [

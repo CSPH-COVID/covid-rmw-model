@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from covid_model.rmw_model import RMWCovidModel
-from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot, do_variant_optimization, set_tc_for_projection, restore_tc
+from covid_model.runnable_functions import do_single_fit, do_create_report, forward_sim_plot, do_variant_optimization, do_variant_optimization_beta_seeds, set_tc_for_projection, restore_tc
 from covid_model.utils import setup, get_filepath_prefix
 from covid_model.analysis.charts import plot_transmission_control
 
@@ -67,6 +67,7 @@ def wrapper_run(args: dict):
         'tags': {"region": instance_region},
         'outdir': outdir,
         'pickle_matrices': False,
+        'tc_0': 0.3329
         #'pre_solve_model': True,
         #'tc_window_size': 30,
         #'tc_window_batch_size': 3,
@@ -78,10 +79,32 @@ def wrapper_run(args: dict):
     # This code is mostly just copied from the Jupyter notebooks we use, but in the future we can make this
     # a more general wrapper for doing model fitting and generating plots.
     base_model = do_single_fit(**base_model_args)
-    #base_model = RMWCovidModel(base_spec_id=5505)
+    #CON
+    #base_model = RMWCovidModel(base_spec_id=5562)
+    #COE
+    #base_model = RMWCovidModel(base_spec_id=5559)
+    # Prep and solve model for initial state
     #base_model.prep(pickle_matrices=False)
+    base_model.solve_seir()
+    fit_end_date = pd.to_datetime(base_model_args["fit_end_date"]).date()
+    forward_sim_plot(base_model, outdir=outdir, fit_end=fit_end_date)
+    # Write out this solution for comparison
+    with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf_pre_variant_opt.pkl", "wb") as f:
+        pickle.dump(base_model.solution_ydf, f)
+    # Set up the variant optimization and run it.
+    opt_vars = [v for v in base_model.attrs["variant"] if v not in {"none", "wildtype"}]
+    do_variant_optimization_beta_seeds(base_model, outdir=outdir, variants=opt_vars, write_specs=True)
+    # Solve the model completely from beginning to end.
+    base_model.solve_seir()
+    # Dump the full solution.
+    with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf_post_variant_opt.pkl", "wb") as f:
+        pickle.dump(base_model.solution_ydf, f)
+    # Generate plots with and without simulations.
+    forward_sim_plot(base_model, outdir=outdir)
     forward_sim_plot(base_model, outdir=outdir, n_sims=100)
-
+    # Dump the output after simulation
+    with open(get_filepath_prefix(outdir, tags=base_model.tags) + f"model_solutionydf_post_simulation.pkl", "wb") as f:
+        pickle.dump(base_model.solution_ydf, f)
     #base_model = RMWCovidModel(base_spec_id=5472)
     #base_model.prep()
     #base_model.tags["vopt"] = "pre"
@@ -91,7 +114,13 @@ def wrapper_run(args: dict):
     # forward_sim_plot(base_model, outdir=outdir)
     #restore_tc(model=base_model, last_tc_dict=old_tc_dict)
     # Optimize variants and write results.
-    #base_model = do_variant_optimization(model=base_model, variants=["bq","xbb"], **base_model_args)
+    # base_model = do_variant_optimization(model=base_model, variants=["alpha",
+    #                                                                  "delta",
+    #                                                                  "omicron",
+    #                                                                  "ba2",
+    #                                                                  "ba45",
+    #                                                                  "bq",
+    #                                                                  "xbb"], **base_model_args)
     #base_model.solve_seir()
     #base_model.tags["vopt"] = "post"
     #forward_sim_plot(base_model, outdir=outdir)
